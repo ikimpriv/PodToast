@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.3.0
+## 0.3.1
+
+- Include toolbox notices in the Docker build context; 0.3.0 image publication failed before upload.
 
 - Add an Alpine-based ephemeral toolbox with bash, filesystem/archive utilities, networking and process diagnostics. Targets still need no shell or tools.
 - Document target-cwd execution, explicit ephemeral context and third-party image licenses. The Go agent protocol is unchanged.

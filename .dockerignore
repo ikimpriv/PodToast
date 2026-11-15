@@ -7,3 +7,6 @@
 !internal
 !internal/**
 !Dockerfile
+
+!docs
+!docs/TOOLBOX.md

@@ -10,13 +10,13 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.3.0`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.3.1`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.3.0`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.3.1`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, image pull policy and timeout. Select targets with checkboxes;
@@ -211,5 +211,5 @@ Design references: [Kubernetes ephemeral containers](https://kubernetes.io/docs/
 
 ## Ephemeral shell and toolbox
 
-Version 0.3.0 adds shell utilities. FarshMac runs commands in the ephemeral
+Version 0.3.1 adds shell utilities. FarshMac runs commands in the ephemeral
 container, at the target folder shown in the panel. See [execution context, target selection and component licenses](docs/TOOLBOX.md).

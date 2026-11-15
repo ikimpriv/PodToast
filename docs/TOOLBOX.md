@@ -1,6 +1,6 @@
 # PodToast toolbox and execution context
 
-PodToast 0.3.0 includes an Alpine Linux toolbox: bash/sh, coreutils, findutils,
+PodToast 0.3.1 includes an Alpine Linux toolbox: bash/sh, coreutils, findutils,
 grep/sed/awk, tar and compression/archive tools, curl/wget, DNS tools, ip/ss,
 ping, netcat, ps/top, util-linux, file, less, jq, OpenSSL and CA certificates.
 The Go agent and its filesystem protocol remain usable without a target shell.
