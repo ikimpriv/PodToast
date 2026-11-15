@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -20,6 +21,7 @@ import (
 type Owner struct{ UID, GID int }
 
 type Server struct {
+	metricsMu    sync.Mutex
 	DefaultOwner *Owner
 	Root         string
 	TargetPID    int
@@ -58,6 +60,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusGone)
 			return
 		}
+	}
+	if r.URL.Path == "/metrics" {
+		s.MetricsHandler().ServeHTTP(w, r)
+		return
 	}
 	ctx := r.Context()
 	p := s.path(r.URL.Query().Get("path"))

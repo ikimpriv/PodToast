@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- Prometheus metrics over exec and an optional read-only HTTP listener.
+- Bounded concurrent scrapes, documented metric scopes and missing-value semantics.
+- Compatible filesystem error types for creation and collision handling in FarshMac.
+
 ## 0.1.0
 
 First standalone release, extracted from FarshMac.

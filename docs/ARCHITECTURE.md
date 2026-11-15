@@ -26,10 +26,14 @@ The server permits 32 concurrent streams, 64 KiB frames, a 2 MiB connection
 upload buffer and 256 KiB per-stream upload buffer. Idle timeout is 30 minutes.
 HTTP/2 cancellation stops a request without closing unrelated requests.
 
+Metrics may also be served through an explicitly enabled, read-only HTTP listener;
+see [metrics specification](METRICS.md).
+
 ## Endpoints
 
 | Method | Path | Contract |
 | --- | --- | --- |
+| GET | `/metrics` | Prometheus text format for bounded numeric observations |
 | GET | `/v1/hello` | Version, target PID, file capability, pod network scope |
 | GET | `/v1/list?path=...` | NDJSON entry records, batched in groups of 256; final `text: done` record distinguishes success from truncation |
 | GET | `/v1/read?path=...` | Binary regular-file stream; `Podtoast-Error` trailer propagates partial-read errors |

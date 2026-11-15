@@ -66,7 +66,7 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 		default:
 			cause = errors.New(string(b))
 		}
-		return nil, fmt.Errorf("PodToast %s: %w", path, cause)
+		return nil, &os.PathError{Op: "PodToast " + path, Err: cause}
 	}
 	return resp, nil
 }
@@ -270,4 +270,21 @@ func (f *FS) Canonical(p string) (string, error) {
 func (f *FS) CopyFile(p, to, previous string) error {
 	_, e := f.op(Operation{Op: "copy", Path: p, To: to, Previous: previous})
 	return e
+}
+
+// Metrics returns bounded Prometheus text over the authenticated exec stream.
+func (c *Client) Metrics(ctx context.Context) ([]byte, error) {
+	r, err := c.request(ctx, "GET", "/metrics", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("metrics: HTTP %d", r.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+	if len(b) > 1<<20 {
+		return nil, fmt.Errorf("metrics response exceeds 1 MiB")
+	}
+	return b, err
 }

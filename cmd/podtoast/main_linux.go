@@ -7,6 +7,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -42,6 +44,7 @@ func run() error {
 	}
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	id := flags.String("target-id", "", "container runtime ID")
+	metricsListen := flags.String("metrics-listen", "", "optional read-only HTTP metrics address, e.g. 127.0.0.1:9108; disabled by default")
 	shared := flags.Bool("shared-processes", false, "pod shares PID namespace")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
@@ -110,7 +113,21 @@ func run() error {
 			}
 		}
 	}()
-	podtoast.Serve(conn, &podtoast.Server{Root: "/", TargetPID: pid, CheckTarget: check, DefaultOwner: owner})
+	server := &podtoast.Server{Root: "/", TargetPID: pid, CheckTarget: check, DefaultOwner: owner}
+	if *metricsListen != "" {
+		listener, err := net.Listen("tcp", *metricsListen)
+		if err != nil {
+			return fmt.Errorf("metrics listener: %w", err)
+		}
+		httpServer := &http.Server{Handler: server.MetricsHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 << 10}
+		defer httpServer.Close()
+		go func() {
+			if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintln(os.Stderr, "PodToast metrics:", err)
+			}
+		}()
+	}
+	podtoast.Serve(conn, server)
 	return nil
 }
 func targetPID(id string, shared bool) (int, error) {

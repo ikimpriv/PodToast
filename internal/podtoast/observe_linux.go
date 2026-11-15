@@ -259,3 +259,19 @@ func (s *Server) mounts(ctx context.Context, proc string) Section {
 	}
 	return section(mounts, nil)
 }
+
+func processMetricTotals(section Section) (count, rss, cpu float64, ok bool) {
+	data, ok := section.Value.(map[string]any)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	items, ok := data["items"].([]Process)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	for _, p := range items {
+		rss += float64(p.RSSBytes)
+		cpu += p.CPUSeconds
+	}
+	return float64(len(items)), rss, cpu, true
+}

@@ -10,15 +10,15 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.1.0`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.2.0`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.1.0`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.2.0`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
-2. Select a pod, or enter/select its container, then press **Alt+F9 → Attach ephemeral container… → PodToast**.
+2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, target container, image pull policy and startup timeout. A sole
    ordinary container can be inferred. The image setting is saved with setup.
 3. Enter the container. Existing viewer/editor, copy, move, local copy/rename,
@@ -39,7 +39,7 @@ commands still require an actual shell in the selected application container.
 
 ## Other ephemeral images and launch options
 
-Alt+F9 opens the panel/object context menu. On a pod or its container, **Attach
+Alt+Enter or F11 opens the panel/object context menu. On a pod or its container, **Attach
  ephemeral container…** offers PodToast, the last 16 successful launch presets,
 and **New image…**. Nothing is created until **Start / attach** is submitted.
 History retains the image and options across restarts; target pod/container names
@@ -67,8 +67,7 @@ Kubernetes. PodToast keeps its required filesystem-access profile and offers onl
 compatible image, target, pull-policy and startup-timeout settings.
 
 Adding a debugger changes a single-container pod's layout; open panels are
-remapped to the original container and folder. Window maximize/restore, previously
-on Alt+F9, is now **Cmd+Shift+F9**.
+remapped to the original container and folder. Window maximize/restore uses **Alt+F9**.
 
 ## Build
 
@@ -93,6 +92,12 @@ Use the resulting digest in FarshMac for reproducibility. Registry credentials
 are managed by the pod/cluster image pull configuration, not passed to the agent.
 The final image is `scratch` plus one static executable. FarshMac does not require
 Docker or kubectl to attach; those tools are only used for building/testing.
+
+## Metrics for scrapers
+
+Prometheus-format `GET /metrics` is available over the exec connection, with an
+optional dedicated HTTP listener. See [metrics specification](docs/METRICS.md)
+for series, scopes, lifecycle and listener configuration.
 
 ## Available observations
 
