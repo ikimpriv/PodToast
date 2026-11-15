@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Add bounded pod traffic experiments over the authenticated exec transport: IPv4 TCP monitoring, delay, bandwidth, packet loss and resets.
+- Add independent watchdog ownership, crash/deadline cleanup and pod-wide experiment locking.
+- Keep TLS opaque and bound connection records and buffers.
+- Add real network fault and recovery tests on amd64 and arm64.
+
 ## 0.3.1
 
 - Include toolbox notices in the Docker build context; 0.3.0 image publication failed before upload.

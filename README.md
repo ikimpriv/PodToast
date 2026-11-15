@@ -213,3 +213,7 @@ Design references: [Kubernetes ephemeral containers](https://kubernetes.io/docs/
 
 Version 0.3.1 adds shell utilities. FarshMac runs commands in the ephemeral
 container, at the target folder shown in the panel. See [execution context, target selection and component licenses](docs/TOOLBOX.md).
+
+## Traffic monitoring and connection faults
+
+Version 0.4.0 adds explicit, bounded IPv4 TCP experiments through FarshMac: monitoring, initial connection delay, bandwidth limits, packet loss and resets. An independent watchdog owns rule installation and cleanup. TLS stays encrypted. See [traffic control](docs/TRAFFIC.md) for scope, privileges and limitations.

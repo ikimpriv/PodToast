@@ -35,7 +35,7 @@ func Connect(ctx context.Context, conn net.Conn) (*Client, error) {
 		c.Close()
 		return nil, err
 	}
-	if cap.Version != Version || !cap.Files {
+	if cap.Version != Version || (!cap.Files && !cap.Traffic) {
 		c.Close()
 		return nil, fmt.Errorf("unsupported PodToast protocol %q", cap.Version)
 	}

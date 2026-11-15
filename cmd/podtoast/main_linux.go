@@ -28,8 +28,30 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: podtoast idle | serve --target-id ID [--shared-processes]")
+		return fmt.Errorf("usage: podtoast idle | serve --target-id ID [--shared-processes] | traffic")
 	}
+	if os.Args[1] == "traffic-watchdog" {
+		if len(os.Args) != 4 {
+			return fmt.Errorf("invalid watchdog arguments")
+		}
+		seconds, e := strconv.Atoi(os.Args[3])
+		if e != nil {
+			return e
+		}
+		return podtoast.TrafficWatchdog(os.Args[2], seconds)
+	}
+	if os.Args[1] == "traffic" {
+		conn := &podtoast.StreamConn{Reader: os.Stdin, Writer: os.Stdout, CloseFunc: func() error { return os.Stdin.Close() }}
+		server := &podtoast.TrafficServer{}
+		defer server.Close()
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		closeOnSignal := context.AfterFunc(ctx, func() { conn.Close() })
+		defer closeOnSignal()
+		podtoast.Serve(conn, server)
+		return nil
+	}
+
 	if os.Args[1] == "idle" {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
