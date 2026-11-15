@@ -1,6 +1,6 @@
 # PodToast
 
-PodToast is a small, shell-free Go agent for inspecting and operating on running
+PodToast is a Go file/diagnostic agent with an ephemeral-container toolbox for inspecting and operating on running
 Kubernetes containers, including distroless and scratch applications. FarshMac
 connects to it through an ephemeral container and a persistent Kubernetes exec
 stream. No shell, `ls`, `cat`, `tar`, SSH server, service or listening agent port
@@ -10,17 +10,17 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.2.0`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.3.0`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.2.0`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.3.0`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
-   Enter the image, target container, image pull policy and startup timeout. A sole
-   ordinary container can be inferred. The image setting is saved with setup.
+   Enter the image, image pull policy and timeout. Select targets with checkboxes;
+   a sole running container is automatic. Shared PID targets reuse one agent.
 3. Enter the container. Existing viewer/editor, copy, move, local copy/rename,
    mkdir, delete, chmod, timestamps and symbolic links use PodToast. Transfers
    retain FarshMac's collision, staging, recovery and metadata policies. Same-
@@ -133,7 +133,7 @@ failed requests; deadline-limited runs report how many requests completed.
   `pods/ephemeralcontainers` subresource, plus `pods/exec`. Admission policies may
   refuse the requested security context. PodToast never installs a DaemonSet,
   mounts the host filesystem, uses a runtime socket, or changes cluster RBAC.
-- The agent runs as root with a read-only own root, no privilege escalation,
+- The agent runs as root with a writable ephemeral root for shell temporary files, no privilege escalation,
   `RuntimeDefault` seccomp, all capabilities dropped except SYS_PTRACE,
   SYS_CHROOT, DAC_OVERRIDE, FOWNER, CHOWN and FSETID. These permit intentional
   target-root access and file operations; Pod Security Restricted will normally
@@ -208,3 +208,8 @@ These are opportunities, **not implemented features**:
 Design references: [Kubernetes ephemeral containers](https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/),
 [process namespace sharing](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/),
 [Linux cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html).
+
+## Ephemeral shell and toolbox
+
+Version 0.3.0 adds shell utilities. FarshMac runs commands in the ephemeral
+container, at the target folder shown in the panel. See [execution context, target selection and component licenses](docs/TOOLBOX.md).

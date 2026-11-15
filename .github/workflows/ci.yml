@@ -35,6 +35,7 @@ jobs:
       - name: Container startup and shutdown
         run: |
           docker build -t podtoast:test .
+          docker run --rm --entrypoint /bin/sh podtoast:test -c 'for tool in bash ls find tar curl dig ip ss ps jq; do command -v "$tool" || exit 1; done; printf "{\"ok\":true}" | jq -e .ok'
           id=$(docker run -d podtoast:test)
           trap 'docker rm -f "$id" >/dev/null' EXIT
           test "$(docker inspect -f '{{.State.Running}}' "$id")" = true

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Add an Alpine-based ephemeral toolbox with bash, filesystem/archive utilities, networking and process diagnostics. Targets still need no shell or tools.
+- Document target-cwd execution, explicit ephemeral context and third-party image licenses. The Go agent protocol is unchanged.
+
 ## 0.2.0
 
 - Prometheus metrics over exec and an optional read-only HTTP listener.
