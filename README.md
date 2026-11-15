@@ -90,7 +90,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 Use the resulting digest in FarshMac for reproducibility. Registry credentials
 are managed by the pod/cluster image pull configuration, not passed to the agent.
-The final image is `scratch` plus one static executable. FarshMac does not require
+The final image contains the static Go agent and an Alpine diagnostic toolbox. FarshMac does not require
 Docker or kubectl to attach; those tools are only used for building/testing.
 
 ## Metrics for scrapers

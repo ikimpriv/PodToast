@@ -7,9 +7,13 @@ agent must not be exposed through a public TCP listener.
 
 The FarshMac launcher requests root with SYS_PTRACE, SYS_CHROOT, DAC_OVERRIDE,
 FOWNER, CHOWN and FSETID, drops other capabilities, disables privilege escalation,
-uses RuntimeDefault seccomp and a read-only agent root. Pod Security Restricted
+uses RuntimeDefault seccomp. The toolbox launcher permits a writable ephemeral
+root for shell temporary files; target read-only mounts remain read-only. Pod Security Restricted
 normally rejects this configuration. There is no automatic privileged fallback.
-Chroot provides target path semantics; it is not a hostile-workload sandbox.
+The file API chroots for target path semantics; it is not a hostile-workload sandbox.
+Interactive and panel commands instead run in the debug root with cwd in the
+target tree. Absolute shell paths and symlinks resolve against the debug root;
+TARGET_ROOT explicitly names the application root. Commands use debugger privileges.
 
 A public image does not bypass admission, RBAC, runtime PID-namespace support,
 read-only mounts or network restrictions. Air-gapped clusters must mirror it.
