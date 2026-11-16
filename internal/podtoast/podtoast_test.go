@@ -221,3 +221,35 @@ func TestReadTrailerError(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestListingIncludesLinkTypesInOneRequest(t *testing.T) {
+	root := t.TempDir()
+	if e := os.Mkdir(filepath.Join(root, "folder"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	for name, target := range map[string]string{"directory-link": "folder", "broken-link": "missing"} {
+		if e := os.Symlink(target, filepath.Join(root, name)); e != nil {
+			t.Fatal(e)
+		}
+	}
+	c := testClient(t, &Server{Root: root})
+	entries, e := c.FS(context.Background()).ReadDir("/")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, info := range entries {
+		entry := info.(Entry)
+		if entry.RawName != nil {
+			t.Fatal("ordinary name duplicated in binary field")
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			dir, known := entry.LinkIsDir()
+			if !known || dir != (entry.Name() == "directory-link") {
+				t.Fatalf("missing/wrong link metadata: %+v", entry)
+			}
+		}
+	}
+	if len(entries) != 3 {
+		t.Fatalf("truncated listing: %d", len(entries))
+	}
+}

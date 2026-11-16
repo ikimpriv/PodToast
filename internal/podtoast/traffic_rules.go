@@ -20,9 +20,11 @@ func trafficRules(c TrafficConfig, name string, listen int, mark string) []traff
 	}
 	add("nat", "-N", name)
 	add("nat", "-A", name, "-p", "tcp", "-j", "REDIRECT", "--to-ports", strconv.Itoa(listen))
-	if c.LossPercent > 0 {
+	if c.LossPercent > 0 || c.Interactive {
 		add("mangle", "-N", name)
-		add("mangle", "-A", name, "-m", "statistic", "--mode", "random", "--probability", fmt.Sprintf("%.8f", c.LossPercent/100), "-j", "DROP")
+		if c.LossPercent > 0 {
+			add("mangle", "-A", name, "-m", "statistic", "--mode", "random", "--probability", fmt.Sprintf("%.8f", c.LossPercent/100), "-j", "DROP")
+		}
 	}
 	for _, dir := range []string{"inbound", "outbound"} {
 		if c.Direction != dir && c.Direction != "both" {
@@ -35,7 +37,7 @@ func trafficRules(c TrafficConfig, name string, listen int, mark string) []traff
 		args := []string{"-A", chain, "-p", "tcp", "--dport", strconv.Itoa(c.Port), peer, c.PeerCIDR, "-m", "mark", "!", "--mark", mark, "-j", name}
 		// Loss runs before NAT, and only in the requested direction. The proxy's
 		// own marked sockets bypass both loss and redirection.
-		if c.LossPercent > 0 {
+		if c.LossPercent > 0 || c.Interactive {
 			add("mangle", args...)
 		}
 		add("nat", args...)

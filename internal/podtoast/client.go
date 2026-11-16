@@ -125,7 +125,7 @@ func (f *FS) op(o Operation) (Result, error) {
 	return r, err
 }
 func (f *FS) ReadDir(p string) ([]os.FileInfo, error) {
-	r, err := f.c.request(f.ctx, "GET", "/v1/list?path="+url.QueryEscape(p), nil)
+	r, err := f.c.request(f.ctx, "GET", "/v1/list?links=1&path="+url.QueryEscape(p), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +148,9 @@ func (f *FS) ReadDir(p string) ([]os.FileInfo, error) {
 		}
 		if row.Entry == nil {
 			return nil, errors.New("invalid PodToast directory record")
+		}
+		if len(entries) >= 100000 {
+			return nil, fmt.Errorf("remote folder exceeds 100000 entries")
 		}
 		entries = append(entries, *row.Entry)
 	}

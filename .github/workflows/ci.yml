@@ -44,7 +44,7 @@ jobs:
       - name: Isolated traffic control and crash recovery
         run: |
           CGO_ENABLED=0 go test -c -o /tmp/podtoast-traffic-tests ./internal/podtoast
-          docker run --rm --cap-add NET_ADMIN --network bridge -e PODTOAST_TRAFFIC_TEST=1 -v /tmp/podtoast-traffic-tests:/tests:ro --entrypoint /tests podtoast:test -test.run TestTrafficNetworkNamespace -test.v -test.timeout 90s
+          docker run --rm --cap-add NET_ADMIN --network bridge -e PODTOAST_TRAFFIC_TEST=1 -v /tmp/podtoast-traffic-tests:/tests:ro --entrypoint /tests podtoast:test -test.run TestTraffic.*Namespace -test.v -test.timeout 90s
   publish:
     if: github.event_name != 'pull_request'
     needs: test

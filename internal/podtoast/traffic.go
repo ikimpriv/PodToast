@@ -17,6 +17,7 @@ import (
 // Delay applies once per connection; rate is per direction per connection.
 // No TLS termination, certificate generation or payload storage is performed.
 type TrafficConfig struct {
+	Interactive     bool    `json:"interactive,omitempty"`
 	Direction       string  `json:"direction"`
 	Port            int     `json:"port"`
 	PeerCIDR        string  `json:"peerCIDR"`
@@ -50,12 +51,36 @@ func (c TrafficConfig) Validate() error {
 	return nil
 }
 
+// Interactive changes affect a single selected connection, never its peers.
+type TrafficFaults struct {
+	DelayMS     int     `json:"delayMS"`
+	RateKiB     int     `json:"rateKiB"`
+	LossPercent float64 `json:"lossPercent"`
+}
+type TrafficAction struct {
+	ID     uint64        `json:"id"`
+	Action string        `json:"action"`
+	Faults TrafficFaults `json:"faults"`
+}
+
+func (a TrafficAction) Validate() error {
+	if a.ID == 0 || (a.Action != "reset" && a.Action != "faults" && a.Action != "clear") {
+		return fmt.Errorf("select a connection and a supported action")
+	}
+	f := a.Faults
+	if f.DelayMS < 0 || f.DelayMS > 30000 || f.RateKiB < 0 || f.RateKiB > 1048576 || !(f.LossPercent >= 0 && f.LossPercent <= 100) {
+		return fmt.Errorf("invalid delay, bandwidth or packet loss")
+	}
+	return nil
+}
+
 type TrafficConnection struct {
-	ID                               uint64    `json:"id"`
-	Client                           string    `json:"client"`
-	Destination                      string    `json:"destination"`
-	Opened                           time.Time `json:"opened"`
-	Closed                           bool      `json:"closed"`
+	Faults                           TrafficFaults `json:"faults"`
+	ID                               uint64        `json:"id"`
+	Client                           string        `json:"client"`
+	Destination                      string        `json:"destination"`
+	Opened                           time.Time     `json:"opened"`
+	Closed                           bool          `json:"closed"`
 	Sent, Received                   uint64
 	HTTPMethod, HTTPPath, HTTPStatus string
 	Error                            string `json:"error,omitempty"`
@@ -74,6 +99,8 @@ type TrafficServer struct {
 	control sync.Mutex
 	state   TrafficStatus
 	stop    func() error
+	renew   func() error
+	action  func(TrafficAction) error
 }
 
 func (s *TrafficServer) snapshot() TrafficStatus {
@@ -102,9 +129,44 @@ func (s *TrafficServer) Close() error {
 func (s *TrafficServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/v1/hello":
-		reply(w, Capability{Version: Version, NetworkScope: "pod", Traffic: true})
+		reply(w, Capability{Version: Version, NetworkScope: "pod", Traffic: true, InteractiveTraffic: true})
 	case r.Method == "GET" && r.URL.Path == "/v1/traffic":
 		reply(w, s.snapshot())
+	case r.Method == "POST" && (r.URL.Path == "/v1/traffic/renew" || r.URL.Path == "/v1/traffic/action"):
+		s.control.Lock()
+		defer s.control.Unlock()
+		if !s.snapshot().Active {
+			fail(w, fmt.Errorf("monitor is not active"))
+			return
+		}
+		var err error
+		if r.URL.Path == "/v1/traffic/renew" {
+			if s.renew == nil {
+				err = fmt.Errorf("session does not support renewal")
+			} else {
+				err = s.renew()
+			}
+		} else {
+			var a TrafficAction
+			d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+			d.DisallowUnknownFields()
+			err = d.Decode(&a)
+			if err == nil {
+				err = a.Validate()
+			}
+			if err == nil {
+				if s.action == nil {
+					err = fmt.Errorf("interactive actions unavailable")
+				} else {
+					err = s.action(a)
+				}
+			}
+		}
+		if err != nil {
+			fail(w, err)
+		} else {
+			reply(w, s.snapshot())
+		}
 	case r.Method == "POST" && r.URL.Path == "/v1/traffic/stop":
 		if err := s.Close(); err != nil {
 			fail(w, err)

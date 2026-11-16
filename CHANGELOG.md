@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- Support interactive traffic sessions with renewable leases and automatic cleanup on disconnect or lease expiry.
+- Add selected-connection reset, delay, rate limiting, packet loss and fault clearing through the authenticated exec API.
+- Keep dynamic rules under the watchdog's exclusive ownership; retain active connection records and bound history.
+- Include symlink target types in directory listings, avoiding separate remote stat requests for each link; buffer listings and avoid duplicate name encoding.
+- Test selected-flow isolation, live fault changes, renewal and cleanup in disposable network namespaces on amd64 and arm64.
+
 ## 0.4.0
 
 - Add bounded pod traffic experiments over the authenticated exec transport: IPv4 TCP monitoring, delay, bandwidth, packet loss and resets.

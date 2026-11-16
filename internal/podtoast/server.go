@@ -1,6 +1,7 @@
 package podtoast
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // Server runs after entering the target root in cmd/podtoast. Root is only
@@ -30,7 +32,10 @@ type Server struct {
 
 func (s *Server) path(p string) string { return filepath.Join(s.Root, filepath.Clean("/"+p)) }
 func entry(i os.FileInfo) Entry {
-	e := Entry{RawName: []byte(i.Name()), Filename: i.Name(), Bytes: i.Size(), FileMode: i.Mode(), Modified: i.ModTime()}
+	e := Entry{Filename: i.Name(), Bytes: i.Size(), FileMode: i.Mode(), Modified: i.ModTime()}
+	if !utf8.ValidString(i.Name()) {
+		e.RawName = []byte(i.Name())
+	}
 	if st, ok := i.Sys().(*syscall.Stat_t); ok {
 		e.UID, e.GID = st.Uid, st.Gid
 	}
@@ -79,7 +84,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer f.Close()
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		// A final record distinguishes successful EOF from a truncated transport.
-		enc := json.NewEncoder(w)
+		buffer := bufio.NewWriterSize(w, 64<<10)
+		defer buffer.Flush()
+		enc := json.NewEncoder(buffer)
 		for {
 			if ctx.Err() != nil {
 				return
@@ -91,9 +98,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, info := range batch {
 				e := entry(info)
+				if r.URL.Query().Get("links") == "1" && info.Mode()&os.ModeSymlink != 0 {
+					target, statErr := os.Stat(filepath.Join(p, info.Name()))
+					dir := statErr == nil && target.IsDir()
+					e.LinkDirectory = &dir
+				}
 				if enc.Encode(Result{Entry: &e}) != nil {
 					return
 				}
+			}
+			if err := buffer.Flush(); err != nil {
+				return
 			}
 			if fl, ok := w.(http.Flusher); ok {
 				fl.Flush()

@@ -48,3 +48,16 @@ func TestTrafficHTTPPrivacy(t *testing.T) {
 		t.Fatal("TLS inspected")
 	}
 }
+
+func TestInteractiveTrafficValidation(t *testing.T) {
+	for _, a := range []TrafficAction{{}, {ID: 1, Action: "unknown"}, {ID: 1, Action: "faults", Faults: TrafficFaults{LossPercent: 101}}, {ID: 1, Action: "faults", Faults: TrafficFaults{DelayMS: -1}}, {ID: 1, Action: "faults", Faults: TrafficFaults{RateKiB: 1048577}}} {
+		if a.Validate() == nil {
+			t.Fatalf("accepted %+v", a)
+		}
+	}
+	for _, kind := range []string{"reset", "clear", "faults"} {
+		if e := (TrafficAction{ID: 1, Action: kind}).Validate(); e != nil {
+			t.Fatal(e)
+		}
+	}
+}

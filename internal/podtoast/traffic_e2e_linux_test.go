@@ -172,3 +172,149 @@ func TestTrafficNetworkNamespace(t *testing.T) {
 	}
 
 }
+
+func TestTrafficInteractiveNamespace(t *testing.T) {
+	if os.Getenv("PODTOAST_TRAFFIC_TEST") != "1" {
+		t.Skip("isolated NET_ADMIN container only")
+	}
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, e := l.Accept()
+			if e != nil {
+				return
+			}
+			go func() { defer c.Close(); io.Copy(c, c) }()
+		}
+	}()
+	c, _ := trafficTestClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	var st TrafficStatus
+	cfg := TrafficConfig{Interactive: true, Direction: "outbound", Port: l.Addr().(*net.TCPAddr).Port, PeerCIDR: "127.0.0.0/8", DurationSeconds: 5}
+	if err = c.JSON(ctx, "POST", "/v1/traffic/start", cfg, &st); err != nil {
+		t.Fatal(err)
+	}
+	defer c.JSON(context.Background(), "POST", "/v1/traffic/stop", nil, &st)
+	renewCtx, stopRenew := context.WithCancel(ctx)
+	defer stopRenew()
+	renewDone := make(chan struct{})
+	go func() {
+		defer close(renewDone)
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-renewCtx.Done():
+				return
+			case <-tick.C:
+				var state TrafficStatus
+				_ = c.JSON(renewCtx, "POST", "/v1/traffic/renew", nil, &state)
+			}
+		}
+	}()
+	dial := func() net.Conn {
+		conn, e := net.Dial("tcp4", l.Addr().String())
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Cleanup(func() { conn.Close() })
+		return conn
+	}
+	first, second := dial(), dial()
+	echo := func(conn net.Conn, timeout time.Duration) error {
+		conn.SetDeadline(time.Now().Add(timeout))
+		if _, e := conn.Write([]byte("ping")); e != nil {
+			return e
+		}
+		b := make([]byte, 4)
+		_, e := io.ReadFull(conn, b)
+		return e
+	}
+	if e := echo(first, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if e := echo(second, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if err = c.JSON(ctx, "GET", "/v1/traffic", nil, &st); err != nil {
+		t.Fatal(err)
+	}
+	var id uint64
+	for _, flow := range st.Connections {
+		if flow.Client == first.LocalAddr().String() {
+			id = flow.ID
+		}
+	}
+	if id == 0 {
+		t.Fatalf("missing selected flow: %+v", st)
+	}
+	action := func(kind string, f TrafficFaults) {
+		t.Helper()
+		if e := c.JSON(ctx, "POST", "/v1/traffic/action", TrafficAction{ID: id, Action: kind, Faults: f}, &st); e != nil {
+			t.Fatal(e)
+		}
+	}
+	action("faults", TrafficFaults{DelayMS: 100, RateKiB: 1024})
+	start := time.Now()
+	if e := echo(first, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(start) < 180*time.Millisecond {
+		t.Fatal("selected delay not applied to both directions")
+	}
+	start = time.Now()
+	if e := echo(second, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(start) > 150*time.Millisecond {
+		t.Fatal("peer inherited selected delay")
+	}
+	action("faults", TrafficFaults{LossPercent: 100})
+	if e := echo(first, 250*time.Millisecond); e == nil {
+		t.Fatal("100% packet loss did not block selected flow")
+	}
+	if e := echo(second, time.Second); e != nil {
+		t.Fatalf("packet loss affected peer: %v", e)
+	}
+	action("clear", TrafficFaults{})
+	first.SetDeadline(time.Now().Add(3 * time.Second))
+	b := make([]byte, 4)
+	if _, e := io.ReadFull(first, b); e != nil {
+		t.Fatalf("clear did not resume lost transmission: %v", e)
+	}
+	action("reset", TrafficFaults{})
+	if e := echo(first, time.Second); e == nil {
+		t.Fatal("reset left selected flow alive")
+	}
+	if e := echo(second, time.Second); e != nil {
+		t.Fatalf("reset affected peer: %v", e)
+	}
+	// Renewal must keep the session alive beyond its original 5-second lease.
+	time.Sleep(6 * time.Second)
+	if e := c.JSON(ctx, "GET", "/v1/traffic", nil, &st); e != nil || !st.Active {
+		t.Fatalf("renewal: %v %+v", e, st)
+	}
+	for _, flow := range st.Connections {
+		if flow.Client == second.LocalAddr().String() {
+			id = flow.ID
+		}
+	}
+	action("faults", TrafficFaults{LossPercent: 20})
+	stopRenew()
+	<-renewDone
+	time.Sleep(6 * time.Second)
+	if e := c.JSON(ctx, "GET", "/v1/traffic", nil, &st); e != nil || st.Active {
+		t.Fatalf("lease expiry: %v %+v", e, st)
+	}
+	for _, table := range []string{"nat", "mangle"} {
+		out, e := exec.Command("iptables", "-t", table, "-S").CombinedOutput()
+		if e != nil || strings.Contains(string(out), "PT_") {
+			t.Fatalf("rules remain: %s %v", out, e)
+		}
+	}
+}

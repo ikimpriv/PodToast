@@ -3,6 +3,7 @@
 package podtoast
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -48,6 +49,13 @@ func trafficCleanup(rules []trafficRule) error {
 // TrafficWatchdog holds the pod-wide abstract socket lock and a parent-liveness
 // pipe. Even SIGKILL of the proxy closes that pipe and triggers exact-rule cleanup.
 func TrafficWatchdog(journal string, seconds int) error {
+	// A dead parent can close stdout during an acknowledgement. Never let
+	// SIGPIPE terminate the rule owner before its cleanup path.
+	signal.Ignore(syscall.SIGPIPE)
+	interactive := seconds < 0
+	if interactive {
+		seconds = -seconds
+	}
 	if seconds < 5 || seconds > 600 {
 		return fmt.Errorf("invalid watchdog deadline")
 	}
@@ -77,8 +85,25 @@ func TrafficWatchdog(journal string, seconds int) error {
 	if err = json.Unmarshal(b, &rules); err != nil {
 		return err
 	}
+	ctxDone := make(chan struct{})
+	defer close(ctxDone)
 	done := make(chan struct{})
-	go func() { io.Copy(io.Discard, life); close(done) }()
+	commands := make(chan trafficGuardCommand)
+	go func() {
+		defer close(done)
+		d := json.NewDecoder(bufio.NewReader(life))
+		for {
+			var c trafficGuardCommand
+			if d.Decode(&c) != nil {
+				return
+			}
+			select {
+			case commands <- c:
+			case <-ctxDone:
+				return
+			}
+		}
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	// All mutations belong to the watchdog. Parent death during installation
@@ -99,14 +124,89 @@ func TrafficWatchdog(journal string, seconds int) error {
 		}
 	}
 	installErr := err
+	extra := map[uint64][]trafficRule{}
+	allRules := func() []trafficRule {
+		out := append([]trafficRule(nil), rules...)
+		for _, rs := range extra {
+			out = append(out, rs...)
+		}
+		return out
+	}
+	persist := func(rs []trafficRule) error {
+		b, e := json.Marshal(rs)
+		if e != nil {
+			return e
+		}
+		return os.WriteFile(journal, b, 0600)
+	}
 	if installErr == nil {
 		fmt.Fprintln(os.Stdout, "ready")
-		select {
-		case <-done:
-		case <-ctx.Done():
-		case <-time.After(time.Duration(seconds) * time.Second):
+		timer := time.NewTimer(time.Duration(seconds) * time.Second)
+		defer timer.Stop()
+	loop:
+		for {
+			select {
+			case <-done:
+				break loop
+			case <-ctx.Done():
+				break loop
+			case <-timer.C:
+				break loop
+			case c := <-commands:
+				var e error
+				if c.Renew {
+					if !interactive {
+						e = fmt.Errorf("fixed deadline cannot be renewed")
+					} else {
+						if !timer.Stop() {
+							select {
+							case <-timer.C:
+							default:
+							}
+						}
+						timer.Reset(time.Duration(seconds) * time.Second)
+					}
+				} else if !interactive || c.ID == 0 {
+					e = fmt.Errorf("interactive session required")
+				} else {
+					old := extra[c.ID]
+					// Journal both old and new rules before any mutation, including rollback.
+					e = persist(append(allRules(), c.Rules...))
+					if e == nil {
+						e = trafficCleanup(old)
+					}
+					if e == nil {
+						delete(extra, c.ID)
+						extra[c.ID] = c.Rules
+						for _, r := range c.Rules {
+							if e = trafficCommand(r.Add); e != nil {
+								break
+							}
+						}
+						if e != nil {
+							if ce := trafficCleanup(c.Rules); ce != nil {
+								e = errors.Join(e, ce)
+							} else {
+								delete(extra, c.ID)
+							}
+						}
+						if len(extra[c.ID]) == 0 {
+							delete(extra, c.ID)
+						}
+						e = errors.Join(e, persist(allRules()))
+					}
+				}
+				ack := trafficGuardReply{}
+				if e != nil {
+					ack.Error = e.Error()
+				}
+				if json.NewEncoder(os.Stdout).Encode(ack) != nil {
+					break loop
+				}
+			}
 		}
 	}
+	rules = allRules()
 
 	for attempt := 0; attempt < 3; attempt++ {
 		err = trafficCleanup(rules)
@@ -121,7 +221,19 @@ func TrafficWatchdog(journal string, seconds int) error {
 	}
 	return errors.Join(installErr, err)
 }
-func trafficGuard(ctx context.Context, lock *net.UnixListener, rules []trafficRule, seconds int) (func() error, error) {
+
+type trafficGuardCommand struct {
+	Renew bool
+	ID    uint64
+	Rules []trafficRule
+}
+type trafficGuardReply struct{ Error string }
+type trafficGuardian struct {
+	close   func() error
+	command func(trafficGuardCommand) error
+}
+
+func trafficGuard(ctx context.Context, lock *net.UnixListener, rules []trafficRule, seconds int) (*trafficGuardian, error) {
 	dir, err := os.MkdirTemp("", "podtoast-traffic-")
 	if err != nil {
 		return nil, err
@@ -188,7 +300,9 @@ func trafficGuard(ctx context.Context, lock *net.UnixListener, rules []trafficRu
 	}
 	var once sync.Once
 	var result error
-	return func() error {
+	var commandMu sync.Mutex
+	guardian := &trafficGuardian{}
+	guardian.close = func() error {
 		once.Do(func() {
 			w.Close()
 			result = cmd.Wait()
@@ -197,8 +311,25 @@ func trafficGuard(ctx context.Context, lock *net.UnixListener, rules []trafficRu
 			}
 		})
 		return result
-	}, nil
+	}
+	guardian.command = func(c trafficGuardCommand) error {
+		commandMu.Lock()
+		defer commandMu.Unlock()
+		if e := json.NewEncoder(w).Encode(c); e != nil {
+			return e
+		}
+		var ack trafficGuardReply
+		if e := json.NewDecoder(ready).Decode(&ack); e != nil {
+			return e
+		}
+		if ack.Error != "" {
+			return errors.New(ack.Error)
+		}
+		return nil
+	}
+	return guardian, nil
 }
+
 func markTraffic(c *net.TCPConn) error {
 	raw, e := c.SyscallConn()
 	if e != nil {
@@ -260,7 +391,11 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 	}
 	name := fmt.Sprintf("PT_%x", token)
 	rules := trafficRules(c, name, listener.Addr().(*net.TCPAddr).Port, fmt.Sprintf("0x%x", trafficMark))
-	guard, err := trafficGuard(request, lock, rules, c.DurationSeconds)
+	seconds := c.DurationSeconds
+	if c.Interactive {
+		seconds = -seconds
+	}
+	guard, err := trafficGuard(request, lock, rules, seconds)
 	if err != nil {
 		lock.Close()
 		listener.Close()
@@ -268,7 +403,7 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 	}
 	if request.Err() != nil {
 		listener.Close()
-		_ = guard()
+		_ = guard.close()
 		lock.Close()
 		return nil, request.Err()
 	}
@@ -279,7 +414,7 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 	var workers sync.WaitGroup
 	stop := func() error {
 		once.Do(func() { // Remove redirection before stopping the proxy.
-			result = guard()
+			result = guard.close()
 			cancel()
 			listener.Close()
 			workers.Wait()
@@ -292,6 +427,70 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 			s.mu.Unlock()
 		})
 		return result
+	}
+	flows := map[uint64]*trafficFlow{}
+	s.renew = func() error {
+		if !c.Interactive {
+			return fmt.Errorf("fixed deadline cannot be renewed")
+		}
+		if e := guard.command(trafficGuardCommand{Renew: true}); e != nil {
+			return e
+		}
+		s.mu.Lock()
+		s.state.Expires = time.Now().Add(time.Duration(c.DurationSeconds) * time.Second)
+		s.mu.Unlock()
+		return nil
+	}
+	s.action = func(a TrafficAction) error {
+		if !c.Interactive {
+			return fmt.Errorf("interactive session required")
+		}
+		s.mu.Lock()
+		flow := flows[a.ID]
+		s.mu.Unlock()
+		if flow == nil {
+			return fmt.Errorf("connection has closed")
+		}
+		flow.mu.Lock()
+		defer flow.mu.Unlock()
+		if flow.closed {
+			return fmt.Errorf("connection has closed")
+		}
+		if a.Action == "reset" {
+			flow.reset()
+			return nil
+		}
+		f := a.Faults
+		if a.Action == "clear" {
+			f = TrafficFaults{}
+		}
+		var rules []trafficRule
+		if f.LossPercent > 0 {
+			src, sp, e := net.SplitHostPort(flow.client)
+			if e != nil {
+				return e
+			}
+			dst, dp, e := net.SplitHostPort(flow.destination)
+			if e != nil {
+				return e
+			}
+			args := []string{"-w", "2", "-t", "mangle", "-A", name, "-p", "tcp", "-s", src, "--sport", sp, "-d", dst, "--dport", dp, "-m", "statistic", "--mode", "random", "--probability", fmt.Sprintf("%.8f", f.LossPercent/100), "-j", "DROP"}
+			undo := append([]string(nil), args...)
+			undo[4] = "-D"
+			rules = []trafficRule{{args, undo}}
+		}
+		if e := guard.command(trafficGuardCommand{ID: a.ID, Rules: rules}); e != nil {
+			return e
+		}
+		flow.faults = f
+		s.mu.Lock()
+		for i := range s.state.Connections {
+			if s.state.Connections[i].ID == a.ID {
+				s.state.Connections[i].Faults = f
+			}
+		}
+		s.mu.Unlock()
+		return nil
 	}
 	s.mu.Lock()
 	s.state = TrafficStatus{Active: true, Config: c, Expires: time.Now().Add(time.Duration(c.DurationSeconds) * time.Second), Note: "IPv4 TCP only; first HTTP/1 request/response headers per connection; TLS opaque. Delay once per connection; bandwidth per connection and direction. Packet loss is real, before NAT. Original client source IP is not preserved upstream. Existing connections are not redirected."}
@@ -308,7 +507,7 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 			select {
 			case sem <- struct{}{}:
 				workers.Add(1)
-				go func() { defer workers.Done(); defer func() { <-sem }(); s.proxyTraffic(ctx, c, conn) }()
+				go func() { defer workers.Done(); defer func() { <-sem }(); s.proxyTraffic(ctx, c, conn, flows, guard) }()
 			default:
 				s.mu.Lock()
 				s.state.Rejected++
@@ -318,15 +517,33 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 		}
 	}()
 	go func() {
-		select {
-		case <-ctx.Done():
-		case <-time.After(time.Duration(c.DurationSeconds) * time.Second):
-			_ = stop()
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if time.Now().After(s.snapshot().Expires) {
+					_ = stop()
+					return
+				}
+			}
 		}
 	}()
+
 	return stop, nil
 }
-func (s *TrafficServer) proxyTraffic(ctx context.Context, c TrafficConfig, client *net.TCPConn) {
+
+type trafficFlow struct {
+	closed              bool
+	mu                  sync.Mutex
+	faults              TrafficFaults
+	reset               func()
+	client, destination string
+}
+
+func (s *TrafficServer) proxyTraffic(ctx context.Context, c TrafficConfig, client *net.TCPConn, flows map[uint64]*trafficFlow, guard *trafficGuardian) {
 	defer client.Close()
 	dst, err := originalTrafficDestination(client)
 	if err == nil {
@@ -346,9 +563,13 @@ func (s *TrafficServer) proxyTraffic(ctx context.Context, c TrafficConfig, clien
 	s.state.Accepted++
 	id := s.state.Accepted
 	entry := TrafficConnection{ID: id, Client: client.RemoteAddr().String(), Destination: dst, Opened: time.Now()}
-	if len(s.state.Connections) == 128 {
-		copy(s.state.Connections, s.state.Connections[1:])
-		s.state.Connections = s.state.Connections[:127]
+	if len(s.state.Connections) >= 256 {
+		for i, e := range s.state.Connections {
+			if e.Closed {
+				s.state.Connections = append(s.state.Connections[:i], s.state.Connections[i+1:]...)
+				break
+			}
+		}
 	}
 	s.state.Connections = append(s.state.Connections, entry)
 	s.mu.Unlock()
@@ -387,6 +608,35 @@ func (s *TrafficServer) proxyTraffic(ctx context.Context, c TrafficConfig, clien
 	upstream := remote.(*net.TCPConn)
 	closeRemote := context.AfterFunc(connctx, func() { remote.Close() })
 	defer closeRemote()
+	flow := &trafficFlow{client: client.RemoteAddr().String(), destination: dst, faults: TrafficFaults{RateKiB: c.RateKiB}}
+	flow.reset = func() {
+		client.SetLinger(0)
+		upstream.SetLinger(0)
+		s.mu.Lock()
+		s.state.Resets++
+		s.mu.Unlock()
+		cancel()
+	}
+	s.mu.Lock()
+	flows[id] = flow
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(flows, id)
+		s.mu.Unlock()
+		// Clear only this flow's rules. No server control lock: stop waits for workers.
+		flow.mu.Lock()
+		defer flow.mu.Unlock()
+		flow.closed = true
+		loss := flow.faults.LossPercent
+		if loss > 0 {
+			if e := guard.command(trafficGuardCommand{ID: id}); e != nil && ctx.Err() == nil {
+				s.mu.Lock()
+				s.state.CleanupError = "flow rule cleanup: " + e.Error()
+				s.mu.Unlock()
+			}
+		}
+	}()
 	var reset *time.Timer
 	if c.ResetAfterMS > 0 {
 		reset = time.AfterFunc(time.Duration(c.ResetAfterMS)*time.Millisecond, func() {
@@ -421,7 +671,13 @@ func (s *TrafficServer) proxyTraffic(ctx context.Context, c TrafficConfig, clien
 						prefix = nil
 					}
 				}
-				if c.RateKiB > 0 && !trafficWait(connctx, time.Duration(float64(n)/float64(c.RateKiB*1024)*float64(time.Second))) {
+				flow.mu.Lock()
+				f := flow.faults
+				flow.mu.Unlock()
+				if !trafficWait(connctx, time.Duration(f.DelayMS)*time.Millisecond) {
+					return
+				}
+				if f.RateKiB > 0 && !trafficWait(connctx, time.Duration(float64(n)/float64(f.RateKiB*1024)*float64(time.Second))) {
 					return
 				}
 				written, we := to.Write(buf[:n])

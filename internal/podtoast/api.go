@@ -6,13 +6,14 @@ import (
 )
 
 type Entry struct {
-	RawName  []byte      `json:"rawName,omitempty"`
-	Filename string      `json:"name"`
-	Bytes    int64       `json:"size"`
-	FileMode os.FileMode `json:"mode"`
-	Modified time.Time   `json:"modified"`
-	UID      uint32      `json:"uid"`
-	GID      uint32      `json:"gid"`
+	LinkDirectory *bool       `json:"linkDirectory,omitempty"`
+	RawName       []byte      `json:"rawName,omitempty"`
+	Filename      string      `json:"name"`
+	Bytes         int64       `json:"size"`
+	FileMode      os.FileMode `json:"mode"`
+	Modified      time.Time   `json:"modified"`
+	UID           uint32      `json:"uid"`
+	GID           uint32      `json:"gid"`
 }
 
 func (e Entry) Name() string {
@@ -20,6 +21,12 @@ func (e Entry) Name() string {
 		return string(e.RawName)
 	}
 	return e.Filename
+}
+func (e Entry) LinkIsDir() (bool, bool) {
+	if e.LinkDirectory == nil {
+		return false, false
+	}
+	return *e.LinkDirectory, true
 }
 func (e Entry) Size() int64        { return e.Bytes }
 func (e Entry) Mode() os.FileMode  { return e.FileMode }
@@ -45,11 +52,12 @@ type Result struct {
 	Text    string `json:"text,omitempty"`
 }
 type Capability struct {
-	Traffic      bool   `json:"traffic,omitempty"`
-	Version      string `json:"version"`
-	TargetPID    int    `json:"targetPID"`
-	Files        bool   `json:"files"`
-	NetworkScope string `json:"networkScope"`
+	InteractiveTraffic bool   `json:"interactiveTraffic,omitempty"`
+	Traffic            bool   `json:"traffic,omitempty"`
+	Version            string `json:"version"`
+	TargetPID          int    `json:"targetPID"`
+	Files              bool   `json:"files"`
+	NetworkScope       string `json:"networkScope"`
 }
 type Section struct {
 	Value       any    `json:"value,omitempty"`
