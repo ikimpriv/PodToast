@@ -52,6 +52,7 @@ type Result struct {
 	Text    string `json:"text,omitempty"`
 }
 type Capability struct {
+	TrafficOverview    bool   `json:"trafficOverview,omitempty"`
 	PortTraffic        bool   `json:"portTraffic,omitempty"`
 	InteractiveTraffic bool   `json:"interactiveTraffic,omitempty"`
 	Traffic            bool   `json:"traffic,omitempty"`

@@ -92,6 +92,8 @@ type TrafficConnection struct {
 	Error                            string `json:"error,omitempty"`
 }
 type TrafficStatus struct {
+	Capture                                    *TrafficCapture     `json:"capture,omitempty"`
+	Overview                                   *TrafficOverview    `json:"overview,omitempty"`
 	PortFaults                                 TrafficFaults       `json:"portFaults"`
 	Active                                     bool                `json:"active"`
 	Config                                     TrafficConfig       `json:"config"`
@@ -102,13 +104,17 @@ type TrafficStatus struct {
 	Note                                       string `json:"note"`
 }
 type TrafficServer struct {
-	mu      sync.Mutex
-	control sync.Mutex
-	state   TrafficStatus
-	changed chan struct{}
-	stop    func() error
-	renew   func() error
-	action  func(TrafficAction) error
+	captureMu     sync.Mutex
+	counters      *trafficCounters
+	captureStop   func()
+	captureClosed bool
+	mu            sync.Mutex
+	control       sync.Mutex
+	state         TrafficStatus
+	changed       chan struct{}
+	stop          func() error
+	renew         func() error
+	action        func(TrafficAction) error
 }
 
 func (s *TrafficServer) snapshot() TrafficStatus {
@@ -119,6 +125,37 @@ func (s *TrafficServer) snapshot() TrafficStatus {
 	return out
 }
 func (s *TrafficServer) Close() error {
+	e := s.stopExperiment()
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	s.captureClosed = true
+	if s.captureStop != nil {
+		s.captureStop()
+		s.captureStop = nil
+	}
+	return e
+}
+func (s *TrafficServer) captureOverview(ctx context.Context) (*TrafficOverview, *TrafficCapture) {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	overview := trafficOverview(ctx)
+	if s.counters == nil && !s.captureClosed {
+		s.counters = newTrafficCounters()
+		s.counters.inventory(overview.Sockets)
+		stop, e := startTrafficCapture(s.counters)
+		if e != nil {
+			s.counters.err = e.Error()
+		} else {
+			s.captureStop = stop
+		}
+	}
+	if s.counters == nil {
+		return overview, &TrafficCapture{Error: "capture closed"}
+	}
+	s.counters.inventory(overview.Sockets)
+	return overview, s.counters.snapshot()
+}
+func (s *TrafficServer) stopExperiment() error {
 	s.control.Lock()
 	defer s.control.Unlock()
 	var err error
@@ -137,7 +174,24 @@ func (s *TrafficServer) Close() error {
 func (s *TrafficServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/v1/hello":
-		reply(w, Capability{Version: Version, NetworkScope: "pod", Traffic: true, InteractiveTraffic: true, PortTraffic: true})
+		reply(w, Capability{Version: Version, NetworkScope: "pod", Traffic: true, InteractiveTraffic: true, PortTraffic: true, TrafficOverview: true})
+	case (r.Method == "GET" || r.Method == "POST") && r.URL.Path == "/v1/traffic/overview":
+		// POST is the window's keepalive; GET is a purely passive snapshot.
+		if r.Method == "POST" {
+			s.control.Lock()
+			var e error
+			if s.snapshot().Active && s.renew != nil {
+				e = s.renew()
+			}
+			s.control.Unlock()
+			if e != nil {
+				fail(w, e)
+				return
+			}
+		}
+		state := s.snapshot()
+		state.Overview, state.Capture = s.captureOverview(r.Context())
+		reply(w, state)
 	case r.Method == "GET" && r.URL.Path == "/v1/traffic":
 		reply(w, s.snapshot())
 	case r.Method == "POST" && (r.URL.Path == "/v1/traffic/renew" || r.URL.Path == "/v1/traffic/action"):
@@ -176,7 +230,7 @@ func (s *TrafficServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(w, s.snapshot())
 		}
 	case r.Method == "POST" && r.URL.Path == "/v1/traffic/stop":
-		if err := s.Close(); err != nil {
+		if err := s.stopExperiment(); err != nil {
 			fail(w, err)
 		} else {
 			reply(w, s.snapshot())

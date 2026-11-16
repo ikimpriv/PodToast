@@ -421,3 +421,137 @@ func TestTrafficInteractiveNamespace(t *testing.T) {
 		}
 	}
 }
+
+func TestTrafficOverviewNamespace(t *testing.T) {
+	if os.Getenv("PODTOAST_TRAFFIC_TEST") != "1" {
+		t.Skip("disposable namespace only")
+	}
+	listener, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer listener.Close()
+	conn, e := net.Dial("tcp4", listener.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer conn.Close()
+	accepted, e := listener.Accept()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer accepted.Close()
+	udp, e := net.ListenPacket("udp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer udp.Close()
+	c, _ := trafficTestClient(t)
+	for _, method := range []string{"GET", "POST"} {
+		var st TrafficStatus
+		if e := c.JSON(context.Background(), method, "/v1/traffic/overview", nil, &st); e != nil {
+			t.Fatal(e)
+		}
+		if st.Active || st.Overview == nil {
+			t.Fatalf("passive view activated proxy: %+v", st)
+		}
+		listening, established, udpFound := false, false, false
+		for _, s := range st.Overview.Sockets {
+			if s.Protocol == "tcp" && s.Local == listener.Addr().String() {
+				if s.State == "LISTEN" {
+					listening = true
+				}
+				if s.State == "ESTABLISHED" {
+					established = true
+				}
+			}
+			if s.Protocol == "udp" && s.Local == udp.LocalAddr().String() {
+				udpFound = true
+			}
+		}
+		if !listening || !established || !udpFound {
+			t.Fatalf("pre-existing sockets missing: %+v", st.Overview)
+		}
+	}
+	for _, table := range []string{"nat", "mangle"} {
+		out, e := exec.Command("iptables", "-t", table, "-S").CombinedOutput()
+		if e != nil || strings.Contains(string(out), "PT_") {
+			t.Fatalf("observation installed rules: %v %s", e, out)
+		}
+	}
+}
+
+func TestTrafficCaptureNamespace(t *testing.T) {
+	if os.Getenv("PODTOAST_TRAFFIC_TEST") != "1" {
+		t.Skip("disposable namespace only")
+	}
+	listener, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, e := listener.Accept()
+			if e != nil {
+				return
+			}
+			go func() { defer conn.Close(); io.Copy(conn, conn) }()
+		}
+	}()
+	c, _ := trafficTestClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var st TrafficStatus
+	if e := c.JSON(ctx, "GET", "/v1/traffic/overview", nil, &st); e != nil || st.Capture == nil || st.Capture.Error != "" {
+		t.Fatalf("capture unavailable: %+v %v", st.Capture, e)
+	}
+	for i := 0; i < 12; i++ {
+		conn, e := net.Dial("tcp4", listener.Addr().String())
+		if e != nil {
+			t.Fatal(e)
+		}
+		conn.SetDeadline(time.Now().Add(time.Second))
+		if _, e = conn.Write([]byte("short request")); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = io.ReadFull(conn, make([]byte, 13)); e != nil {
+			t.Fatal(e)
+		}
+		conn.Close()
+	}
+	udp, e := net.ListenPacket("udp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer udp.Close()
+	sender, e := net.Dial("udp4", udp.LocalAddr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer sender.Close()
+	sender.Write([]byte("datagram"))
+	udp.SetDeadline(time.Now().Add(time.Second))
+	udp.ReadFrom(make([]byte, 64))
+	time.Sleep(100 * time.Millisecond)
+	if e := c.JSON(ctx, "GET", "/v1/traffic/overview", nil, &st); e != nil {
+		t.Fatal(e)
+	}
+	tcpBytes, udpBytes := uint64(0), uint64(0)
+	connections := uint64(0)
+	for _, g := range st.Capture.Groups {
+		if int(g.Port) == listener.Addr().(*net.TCPAddr).Port {
+			tcpBytes += g.Sent + g.Received
+			connections += g.Connections
+		}
+		if int(g.Port) == udp.LocalAddr().(*net.UDPAddr).Port {
+			udpBytes += g.Sent + g.Received
+		}
+	}
+	if tcpBytes < 12*26 || udpBytes < 8 || connections < 12 {
+		t.Fatalf("short TCP/UDP not captured: %+v", st.Capture)
+	}
+	if st.Active {
+		t.Fatal("capture enabled traffic modification")
+	}
+}

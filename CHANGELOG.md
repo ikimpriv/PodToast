@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+- Observe existing TCP/UDP sockets over IPv4/IPv6 without enabling traffic redirection.
+- Count per-flow IP bytes with a bounded Linux packet ring; retain cumulative incoming/outgoing port groups across short-lived connections.
+- Expose capture timestamps, kernel drops, parsing and retention limits. No payloads are retained or exported.
+- Keep observation running when fault injection is stopped, and shut capture down on monitor disconnect.
+- Show interval process CPU utilization separately from lifetime CPU seconds, with PID reuse and missing-sample protection.
+- Test passive socket inventory, real TCP/UDP capture, short-lived connection accounting, and fault isolation/cleanup in disposable network namespaces.
+
 ## 0.6.0
 
 - Add explicit port-wide delay, per-connection bandwidth, packet loss and reset controls, scoped to the selected direction and peer CIDR.

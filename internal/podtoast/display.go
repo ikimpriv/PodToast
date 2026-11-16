@@ -2,13 +2,15 @@ package podtoast
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
 
 // MonitorText accepts decoded JSON snapshots and remains bounded regardless
 // of process/socket count. Full data is available separately as a snapshot.
-func MonitorText(s Snapshot) string {
+func MonitorText(s Snapshot) string { return monitorText(s, nil) }
+func monitorText(s Snapshot, rates map[float64]float64) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "PodToast · %s · target PID %d · Esc / Ctrl+C stops\n\n", s.At.Format("15:04:05"), s.TargetPID)
 	if s.Resources.Unavailable != "" {
@@ -27,12 +29,24 @@ func MonitorText(s Snapshot) string {
 	} else {
 		fmt.Fprintf(&out, "Storage: %s\n", s.Storage.Unavailable)
 	}
-	out.WriteString("\nProcesses — visible PID namespace; CPU is cumulative seconds\n    PID    PPID    CPU(s)    RSS MiB THR STATE NAME\n")
+	out.WriteString("\nProcesses — visible PID namespace; CPU%: 100% = 1 core; TIME(s): lifetime CPU\n    PID    PPID    CPU%    TIME(s)    RSS MiB THR STATE NAME\n")
 	if m, ok := s.Processes.Value.(map[string]any); ok {
 		if list, ok := m["items"].([]any); ok {
+			list = append([]any(nil), list...)
+			if rates != nil {
+				sort.SliceStable(list, func(i, j int) bool {
+					a, _ := list[i].(map[string]any)
+					b, _ := list[j].(map[string]any)
+					return rates[number(a["pid"])] > rates[number(b["pid"])]
+				})
+			}
 			for _, item := range list[:min(16, len(list))] {
 				if p, ok := item.(map[string]any); ok {
-					fmt.Fprintf(&out, "%7.0f %7.0f %9.2f %10.1f %3.0f %-5s %.60s\n", number(p["pid"]), number(p["parent"]), number(p["cpuSeconds"]), number(p["rssBytes"])/(1<<20), number(p["threads"]), safeText(fmt.Sprint(p["state"])), safeText(fmt.Sprint(p["name"])))
+					cpu := "—"
+					if value, ok := rates[number(p["pid"])]; ok {
+						cpu = fmt.Sprintf("%.1f", value)
+					}
+					fmt.Fprintf(&out, "%7.0f %7.0f %7s %10.2f %10.1f %3.0f %-5s %.60s\n", number(p["pid"]), number(p["parent"]), cpu, number(p["cpuSeconds"]), number(p["rssBytes"])/(1<<20), number(p["threads"]), safeText(fmt.Sprint(p["state"])), safeText(fmt.Sprint(p["name"])))
 				}
 			}
 			fmt.Fprintf(&out, "%d processes (up to 16 shown; full details in PodToast snapshot)\n", len(list))
@@ -66,10 +80,13 @@ func safeText(s string) string {
 
 // MonitorFormatter computes rates from successive samples without storing a
 // time series. CPU 100% means one fully occupied core, not the entire node.
+type processCPUPoint struct{ start, seconds float64 }
 type MonitorFormatter struct {
-	previous time.Time
-	usage    float64
-	have     bool
+	processAt time.Time
+	processes map[float64]processCPUPoint
+	previous  time.Time
+	usage     float64
+	have      bool
 }
 
 func (f *MonitorFormatter) Format(s Snapshot) string {
@@ -87,5 +104,28 @@ func (f *MonitorFormatter) Format(s Snapshot) string {
 			}
 		}
 	}
-	return rate + "\n" + MonitorText(s)
+	rates := map[float64]float64{}
+	next := map[float64]processCPUPoint{}
+	if section, ok := s.Processes.Value.(map[string]any); ok {
+		if list, ok := section["items"].([]any); ok {
+			dt := s.At.Sub(f.processAt).Seconds()
+			for _, raw := range list {
+				p, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				pid := number(p["pid"])
+				point := processCPUPoint{number(p["startTicks"]), number(p["cpuSeconds"])}
+				if old, ok := f.processes[pid]; ok && old.start == point.start && point.seconds >= old.seconds && dt > 0 && dt <= 30 {
+					rates[pid] = 100 * (point.seconds - old.seconds) / dt
+				}
+				if len(next) < 16384 {
+					next[pid] = point
+				}
+			}
+		}
+	}
+	f.processes = next
+	f.processAt = s.At
+	return rate + "\n" + monitorText(s, rates)
 }

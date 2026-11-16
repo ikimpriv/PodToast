@@ -1,6 +1,6 @@
 # Interactive pod traffic monitor
 
-PodToast 0.6.0 extends `podtoast traffic`, an HTTP/2 control service over Kubernetes
+PodToast 0.7.0 extends `podtoast traffic`, an HTTP/2 control service over Kubernetes
 exec stdin/stdout. It does not expose an HTTP control port in the pod. The new
 `traffic` hello capability is separate from filesystem access. Traffic runs in
 the ephemeral root without chroot or a target PID requirement.
@@ -8,11 +8,49 @@ the ephemeral root without chroot or a target PID requirement.
 TLS decryption is not implemented. No CA is generated, trust store changed, or
 TLS certificate validation bypassed. Encrypted connections remain opaque TCP.
 
-## Scope and effects
+## Passive observation
+
+`GET /v1/traffic/overview` returns `overview` (socket inventory and non-loopback
+interface totals) and `capture` (per-flow and port-group counters). POST also
+renews an active fault lease. Opening this endpoint never installs iptables rules.
+`POST /v1/traffic/stop` stops fault injection while capture continues; closing the
+exec transport stops both. The hello response advertises `trafficOverview`.
+
+The connection table includes pre-existing TCP/UDP sockets over IPv4/IPv6.
+Counters start when monitoring opens, not when the application started. A 4 MiB
+TPACKET_V2 mmap ring captures 256-byte header snapshots with NET_RAW. Only header
+metadata and byte counts survive parsing; no payload or TLS decoding is performed.
+Bytes are IP bytes, including headers and retransmissions, not application payload
+bytes. Interface totals exclude loopback; flow counters include local conversations
+once. These scopes differ and need not sum to the same total.
+
+Incoming groups use the local server port; outgoing groups use the remote port.
+For pre-existing TCP flows, listener inventory helps infer direction; for UDP,
+the first observed packet determines direction. This is heuristic for connections
+whose handshake predates capture. UDP flows expire after 60 seconds of inactivity.
+Port-group byte totals retain short flows even when detailed history is evicted.
+Connection counts describe observed flow records, not guaranteed handshake counts;
+active record eviction can increase the count on later traffic.
+
+Limits: 8,192 recent flow records, 2,048 port groups, 4,096 inventory sockets,
+300 chart samples, 64 selected rows. Kernel drops, unparsed/non-TCP/UDP packets,
+record evictions and the group limit are explicit diagnostics. Non-first IP
+fragments and unsupported extension chains cannot currently be attributed to a
+flow, so counts are incomplete when these diagnostics increase. Capture is not a
+lossless packet recorder. Existing service-mesh/CNI behavior may affect visibility.
+
+FarshMac separates Connections, Port groups, Sockets & listeners and Fault injection.
+Select several rows for an overlay, optionally with a sum; filter sent, received
+or combined traffic. Group charts keep five minutes of history; per-connection
+history starts when selected. TCP/UDP observation does not depend on the proxy's
+selected port. Fault controls apply only to the explicitly enabled IPv4 TCP
+experiment; an observed pre-existing flow cannot be reset through this proxy API.
+
+## Fault injection: scope and effects
 
 Each experiment selects one **IPv4 TCP destination port**, a peer CIDR and an
 inbound/outbound/both direction. Inbound uses PREROUTING and the source CIDR;
-outbound uses OUTPUT and the destination CIDR. IPv6 and UDP are unsupported.
+outbound uses OUTPUT and the destination CIDR. IPv6 and UDP fault injection are unsupported (passive observation supports both).
 Only new connections are redirected. The proxy changes the client source
 address seen by the upstream application. This is an active proxy, not passive
 packet capture; TLS still passes through without termination.
@@ -59,7 +97,7 @@ routing mode. Test selected flows before relying on an experiment.
 ## FarshMac
 
 Select a pod/container, then **F11 / Alt+Enter → Traffic monitoring / faults…**.
-The Start form specifies only the image, direction, port and peer CIDR. Only Start may
+The Start form specifies the image and explicit attachment permission. Opening the window starts passive monitoring; direction, port and peer CIDR are selected separately through Test network conditions. Only Start may
 attach a network agent, and only when its explicit attachment checkbox is set.
 An existing running PodToast with NET_ADMIN and the selected image is reused. Older images without the
 traffic API return an actionable compatibility error.
