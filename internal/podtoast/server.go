@@ -87,6 +87,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		buffer := bufio.NewWriterSize(w, 64<<10)
 		defer buffer.Flush()
 		enc := json.NewEncoder(buffer)
+		mounts := s.listingMounts()
+		directory := s.listingPath(p)
+		parentMount := mountAt(mounts, directory)
+		mountPoints := map[string]*MountLocation{}
+		for i := range mounts {
+			mountPoints[mounts[i].Path] = &mounts[i]
+		}
 		for {
 			if ctx.Err() != nil {
 				return
@@ -98,6 +105,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, info := range batch {
 				e := entry(info)
+				e.Mount = parentMount
+				if mounted := mountPoints[filepath.Clean(filepath.Join(directory, info.Name()))]; mounted != nil {
+					e.Mount = mounted
+				}
+				if e.Mount != nil {
+					e.MountPoint = e.Mount.Path != "/" && e.Mount.Path == filepath.Clean(filepath.Join(directory, info.Name()))
+				}
 				if r.URL.Query().Get("links") == "1" && info.Mode()&os.ModeSymlink != 0 {
 					target, statErr := os.Stat(filepath.Join(p, info.Name()))
 					dir := statErr == nil && target.IsDir()

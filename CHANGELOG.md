@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- Include the target mount path, filesystem type and mount-point flag in streamed directory entries. Read the mount table once per listing, with bounded memory and no per-entry remote requests.
+- Resolve the listing directory once for correct mount identity through directory symlinks. Keep symlink entries classified by their own location.
+- Let FarshMac combine observed mount identity with Kubernetes volume metadata to distinguish container filesystems, disk/RAM emptyDir, PVCs and other volume types.
+
 ## 0.7.0
 
 - Observe existing TCP/UDP sockets over IPv4/IPv6 without enabling traffic redirection.

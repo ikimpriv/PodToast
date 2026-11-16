@@ -6,14 +6,16 @@ import (
 )
 
 type Entry struct {
-	LinkDirectory *bool       `json:"linkDirectory,omitempty"`
-	RawName       []byte      `json:"rawName,omitempty"`
-	Filename      string      `json:"name"`
-	Bytes         int64       `json:"size"`
-	FileMode      os.FileMode `json:"mode"`
-	Modified      time.Time   `json:"modified"`
-	UID           uint32      `json:"uid"`
-	GID           uint32      `json:"gid"`
+	MountPoint    bool           `json:"mountPoint,omitempty"`
+	Mount         *MountLocation `json:"mount,omitempty"`
+	LinkDirectory *bool          `json:"linkDirectory,omitempty"`
+	RawName       []byte         `json:"rawName,omitempty"`
+	Filename      string         `json:"name"`
+	Bytes         int64          `json:"size"`
+	FileMode      os.FileMode    `json:"mode"`
+	Modified      time.Time      `json:"modified"`
+	UID           uint32         `json:"uid"`
+	GID           uint32         `json:"gid"`
 }
 
 func (e Entry) Name() string {

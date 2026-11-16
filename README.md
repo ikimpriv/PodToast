@@ -10,13 +10,13 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.7.0`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.7.1`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.7.0`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.7.1`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, image pull policy and timeout. Select targets with checkboxes;
@@ -217,3 +217,9 @@ container, at the target folder shown in the panel. See [execution context, targ
 ## Traffic monitoring and connection faults
 
 Version 0.7.0 adds passive TCP/UDP connection observation and port-group traffic counters alongside FarshMac's graphical traffic window. Multi-select connections or incoming/outgoing port groups to compare rates. Fault injection is a separate explicit action, retaining the IPv4 TCP proxy and watchdog cleanup from 0.6.0. TLS stays encrypted. See [traffic monitoring](docs/TRAFFIC.md) for scope, privileges and limits.
+
+### Storage identity and usage
+
+Directory entries expose the target mount path and filesystem type (0.7.1+). FarshMac combines these with the pod specification: mount points are highlighted and selected entries identify PVCs, disk/RAM emptyDir and other volumes. The agent reads mountinfo once per listing; it does not scan directory trees to guess storage usage.
+
+CPU and memory come directly from verified target cgroups, without metrics-server. Exact Kubernetes ephemeral storage accounting (writable layer, runtime logs and shared disk emptyDir) requires kubelet statistics; a chrooted agent cannot reliably separate image layers or read node-managed logs. statfs capacity is shared filesystem capacity, not container consumption. FarshMac reads kubelet stats via the API server when nodes/proxy access is available. No host mounts or additional privileges are attached automatically.
