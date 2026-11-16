@@ -51,20 +51,26 @@ func (c TrafficConfig) Validate() error {
 	return nil
 }
 
-// Interactive changes affect a single selected connection, never its peers.
+// Port conditions apply to existing and future matching flows; connection
+// conditions add to them. Delay adds, rate uses the lower nonzero limit,
+// and independent packet-loss rules compound their probabilities.
 type TrafficFaults struct {
 	DelayMS     int     `json:"delayMS"`
 	RateKiB     int     `json:"rateKiB"`
 	LossPercent float64 `json:"lossPercent"`
 }
 type TrafficAction struct {
+	Scope  string        `json:"scope,omitempty"`
+	Port   int           `json:"port,omitempty"`
 	ID     uint64        `json:"id"`
 	Action string        `json:"action"`
 	Faults TrafficFaults `json:"faults"`
 }
 
 func (a TrafficAction) Validate() error {
-	if a.ID == 0 || (a.Action != "reset" && a.Action != "faults" && a.Action != "clear") {
+	if (a.Scope != "" && a.Scope != "connection" && a.Scope != "port") ||
+		(a.Scope == "port" && (a.ID != 0 || a.Port < 1 || a.Port > 65535)) ||
+		(a.Scope != "port" && (a.ID == 0 || a.Port != 0)) || (a.Action != "reset" && a.Action != "faults" && a.Action != "clear") {
 		return fmt.Errorf("select a connection and a supported action")
 	}
 	f := a.Faults
@@ -86,6 +92,7 @@ type TrafficConnection struct {
 	Error                            string `json:"error,omitempty"`
 }
 type TrafficStatus struct {
+	PortFaults                                 TrafficFaults       `json:"portFaults"`
 	Active                                     bool                `json:"active"`
 	Config                                     TrafficConfig       `json:"config"`
 	Expires                                    time.Time           `json:"expires"`
@@ -98,6 +105,7 @@ type TrafficServer struct {
 	mu      sync.Mutex
 	control sync.Mutex
 	state   TrafficStatus
+	changed chan struct{}
 	stop    func() error
 	renew   func() error
 	action  func(TrafficAction) error
@@ -129,7 +137,7 @@ func (s *TrafficServer) Close() error {
 func (s *TrafficServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/v1/hello":
-		reply(w, Capability{Version: Version, NetworkScope: "pod", Traffic: true, InteractiveTraffic: true})
+		reply(w, Capability{Version: Version, NetworkScope: "pod", Traffic: true, InteractiveTraffic: true, PortTraffic: true})
 	case r.Method == "GET" && r.URL.Path == "/v1/traffic":
 		reply(w, s.snapshot())
 	case r.Method == "POST" && (r.URL.Path == "/v1/traffic/renew" || r.URL.Path == "/v1/traffic/action"):

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Add explicit port-wide delay, per-connection bandwidth, packet loss and reset controls, scoped to the selected direction and peer CIDR.
+- Apply port conditions to existing and future flows while retaining additional per-connection settings.
+- Wake queued chunks when conditions change so clearing long delays takes effect immediately.
+- Expose port-control capabilities and state; test scope isolation, inheritance, combined conditions and live clearing using real TCP flows.
+
 ## 0.5.0
 
 - Support interactive traffic sessions with renewable leases and automatic cleanup on disconnect or lease expiry.

@@ -445,6 +445,47 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 		if !c.Interactive {
 			return fmt.Errorf("interactive session required")
 		}
+		if a.Scope == "port" {
+			if a.Port != c.Port {
+				return fmt.Errorf("port is outside this monitor's scope")
+			}
+			if a.Action == "reset" {
+				s.mu.Lock()
+				list := make([]*trafficFlow, 0, len(flows))
+				for _, f := range flows {
+					list = append(list, f)
+				}
+				s.mu.Unlock()
+				for _, f := range list {
+					f.mu.Lock()
+					if !f.closed {
+						f.reset()
+					}
+					f.mu.Unlock()
+				}
+				return nil
+			}
+			f := a.Faults
+			if a.Action == "clear" {
+				f = TrafficFaults{}
+			}
+			var rules []trafficRule
+			if f.LossPercent > 0 {
+				args := []string{"-w", "2", "-t", "mangle", "-A", name, "-m", "statistic", "--mode", "random", "--probability", fmt.Sprintf("%.8f", f.LossPercent/100), "-j", "DROP"}
+				undo := append([]string(nil), args...)
+				undo[4] = "-D"
+				rules = []trafficRule{{args, undo}}
+			}
+			if e := guard.command(trafficGuardCommand{ID: ^uint64(0), Rules: rules}); e != nil {
+				return e
+			}
+			s.mu.Lock()
+			s.state.PortFaults = f
+			close(s.changed)
+			s.changed = make(chan struct{})
+			s.mu.Unlock()
+			return nil
+		}
 		s.mu.Lock()
 		flow := flows[a.ID]
 		s.mu.Unlock()
@@ -484,6 +525,8 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 		}
 		flow.faults = f
 		s.mu.Lock()
+		close(s.changed)
+		s.changed = make(chan struct{})
 		for i := range s.state.Connections {
 			if s.state.Connections[i].ID == a.ID {
 				s.state.Connections[i].Faults = f
@@ -493,6 +536,7 @@ func (s *TrafficServer) start(request context.Context, c TrafficConfig) (func() 
 		return nil
 	}
 	s.mu.Lock()
+	s.changed = make(chan struct{})
 	s.state = TrafficStatus{Active: true, Config: c, Expires: time.Now().Add(time.Duration(c.DurationSeconds) * time.Second), Note: "IPv4 TCP only; first HTTP/1 request/response headers per connection; TLS opaque. Delay once per connection; bandwidth per connection and direction. Packet loss is real, before NAT. Original client source IP is not preserved upstream. Existing connections are not redirected."}
 	s.mu.Unlock()
 	sem := make(chan struct{}, 128)
@@ -671,15 +715,41 @@ func (s *TrafficServer) proxyTraffic(ctx context.Context, c TrafficConfig, clien
 						prefix = nil
 					}
 				}
-				flow.mu.Lock()
-				f := flow.faults
-				flow.mu.Unlock()
-				if !trafficWait(connctx, time.Duration(f.DelayMS)*time.Millisecond) {
-					return
+				// Re-evaluate waits when either scope changes so clearing a
+				// long delay/rate limit resumes a queued chunk immediately.
+				started := time.Now()
+				for {
+					s.mu.Lock()
+					port, changed := s.state.PortFaults, s.changed
+					s.mu.Unlock()
+					flow.mu.Lock()
+					f := flow.faults
+					flow.mu.Unlock()
+					delay := time.Duration(f.DelayMS+port.DelayMS) * time.Millisecond
+					rate := f.RateKiB
+					if port.RateKiB > 0 && (rate == 0 || port.RateKiB < rate) {
+						rate = port.RateKiB
+					}
+					if rate > 0 {
+						delay += time.Duration(float64(n) / float64(rate*1024) * float64(time.Second))
+					}
+					remaining := delay - time.Since(started)
+					if remaining <= 0 {
+						break
+					}
+					timer := time.NewTimer(remaining)
+					select {
+					case <-connctx.Done():
+						timer.Stop()
+						return
+					case <-changed:
+						timer.Stop()
+						continue
+					case <-timer.C:
+					}
+					break
 				}
-				if f.RateKiB > 0 && !trafficWait(connctx, time.Duration(float64(n)/float64(f.RateKiB*1024)*float64(time.Second))) {
-					return
-				}
+
 				written, we := to.Write(buf[:n])
 				s.mu.Lock()
 				if response {

@@ -294,6 +294,109 @@ func TestTrafficInteractiveNamespace(t *testing.T) {
 	if e := echo(second, time.Second); e != nil {
 		t.Fatalf("reset affected peer: %v", e)
 	}
+
+	portAction := func(kind string, f TrafficFaults) {
+		t.Helper()
+		if e := c.JSON(ctx, "POST", "/v1/traffic/action", TrafficAction{Scope: "port", Port: cfg.Port, Action: kind, Faults: f}, &st); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := c.JSON(ctx, "POST", "/v1/traffic/action", TrafficAction{Scope: "port", Port: cfg.Port%65535 + 1, Action: "clear"}, &st); e == nil {
+		t.Fatal("action escaped selected port")
+	}
+	portAction("faults", TrafficFaults{DelayMS: 100})
+	start = time.Now()
+	if e := echo(second, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(start) < 180*time.Millisecond {
+		t.Fatal("port delay not applied to existing flow")
+	}
+	third := dial()
+	start = time.Now()
+	if e := echo(third, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(start) < 180*time.Millisecond {
+		t.Fatal("port delay not inherited by future flow")
+	}
+	for _, flow := range st.Connections {
+		if flow.Client == second.LocalAddr().String() {
+			id = flow.ID
+		}
+	}
+	action("faults", TrafficFaults{DelayMS: 100})
+	start = time.Now()
+	if e := echo(second, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(start) < 360*time.Millisecond {
+		t.Fatal("connection and port delays did not add")
+	}
+	action("clear", TrafficFaults{})
+	start = time.Now()
+	if e := echo(second, time.Second); e != nil {
+		t.Fatal(e)
+	}
+	if time.Since(start) < 180*time.Millisecond {
+		t.Fatal("connection clear incorrectly cleared port")
+	}
+	portAction("faults", TrafficFaults{LossPercent: 100})
+	if e := echo(second, 200*time.Millisecond); e == nil {
+		t.Fatal("port block missed existing flow")
+	}
+	if e := echo(third, 200*time.Millisecond); e == nil {
+		t.Fatal("port block missed other flow")
+	}
+	other, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer other.Close()
+	go func() {
+		conn, e := other.Accept()
+		if e == nil {
+			defer conn.Close()
+			io.Copy(conn, conn)
+		}
+	}()
+	unaffected, e := net.Dial("tcp4", other.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer unaffected.Close()
+	if e := echo(unaffected, time.Second); e != nil {
+		t.Fatalf("port block affected another port: %v", e)
+	}
+	if blocked, e := net.DialTimeout("tcp4", l.Addr().String(), 200*time.Millisecond); e == nil {
+		blocked.Close()
+		t.Fatal("port block allowed new flow")
+	}
+	portAction("clear", TrafficFaults{})
+	for _, conn := range []net.Conn{second, third} {
+		conn.SetDeadline(time.Now().Add(3 * time.Second))
+		if _, e := io.ReadFull(conn, make([]byte, 4)); e != nil {
+			t.Fatal(e)
+		}
+	}
+	portAction("faults", TrafficFaults{DelayMS: 30000})
+	resumed := make(chan error, 1)
+	go func() { resumed <- echo(second, 2*time.Second) }()
+	time.Sleep(100 * time.Millisecond)
+	portAction("clear", TrafficFaults{})
+	if e := <-resumed; e != nil {
+		t.Fatalf("clearing delay did not wake queued data: %v", e)
+	}
+	portAction("reset", TrafficFaults{})
+	for _, conn := range []net.Conn{second, third} {
+		if e := echo(conn, time.Second); e == nil {
+			t.Fatal("port reset left flow open")
+		}
+	}
+	second = dial()
+	if e := echo(second, time.Second); e != nil {
+		t.Fatalf("port reset affected future connection: %v", e)
+	}
 	// Renewal must keep the session alive beyond its original 5-second lease.
 	time.Sleep(6 * time.Second)
 	if e := c.JSON(ctx, "GET", "/v1/traffic", nil, &st); e != nil || !st.Active {

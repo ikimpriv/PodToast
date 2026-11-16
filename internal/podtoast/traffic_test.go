@@ -61,3 +61,16 @@ func TestInteractiveTrafficValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPortTrafficActionScope(t *testing.T) {
+	for _, a := range []TrafficAction{{Scope: "port", Port: 0, Action: "clear"}, {Scope: "port", Port: 80, ID: 1, Action: "clear"}, {Scope: "connection", Port: 80, ID: 1, Action: "clear"}, {Scope: "all", Action: "reset"}} {
+		if a.Validate() == nil {
+			t.Fatalf("invalid scope accepted: %+v", a)
+		}
+	}
+	for _, kind := range []string{"reset", "faults", "clear"} {
+		if e := (TrafficAction{Scope: "port", Port: 8080, Action: kind}).Validate(); e != nil {
+			t.Fatal(e)
+		}
+	}
+}

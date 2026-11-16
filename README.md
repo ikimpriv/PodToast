@@ -10,13 +10,13 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.5.0`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.6.0`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.5.0`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.6.0`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, image pull policy and timeout. Select targets with checkboxes;
@@ -216,4 +216,4 @@ container, at the target folder shown in the panel. See [execution context, targ
 
 ## Traffic monitoring and connection faults
 
-Version 0.5.0 adds an independent graphical FarshMac traffic window with live charts and selected-connection delay, bandwidth limits, packet loss and resets. Interactive monitoring runs until exit using a renewable lease. An independent watchdog owns rule installation and cleanup. TLS stays encrypted. See [traffic control](docs/TRAFFIC.md) for scope, privileges and limitations.
+Version 0.6.0 adds port-wide controls alongside an independent graphical FarshMac traffic window with live charts and selected-connection delay, bandwidth limits, packet loss and resets. Interactive monitoring runs until exit using a renewable lease. An independent watchdog owns rule installation and cleanup. TLS stays encrypted. See [traffic control](docs/TRAFFIC.md) for scope, privileges and limitations.

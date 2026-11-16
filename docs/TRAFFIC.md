@@ -1,6 +1,6 @@
 # Interactive pod traffic monitor
 
-PodToast 0.5.0 extends `podtoast traffic`, an HTTP/2 control service over Kubernetes
+PodToast 0.6.0 extends `podtoast traffic`, an HTTP/2 control service over Kubernetes
 exec stdin/stdout. It does not expose an HTTP control port in the pod. The new
 `traffic` hello capability is separate from filesystem access. Traffic runs in
 the ephemeral root without chroot or a target PID requirement.
@@ -73,7 +73,22 @@ view and human-readable units. History is bounded to 300 samples. A selected
 connection can have its own rate graph; collection begins when it is selected.
 
 Search filters addresses and the first HTTP exchange. Open-only filtering is
-available. Select a connection, then use the toolbar or keyboard:
+available. Every connection row has Conditions, Block/Unblock, Clear and Reset buttons.
+The port toolbar controls all matching traffic in the selected port/direction/CIDR.
+Port delay and per-connection rate limits apply to current and future proxied
+connections. Port loss also affects matching packets before proxy redirection,
+including connection establishment. Reset open connections resets only current
+monitored flows; it does not prevent new connections.
+
+Port conditions are a baseline. Connection delay adds to port delay; rate uses
+the lower nonzero per-connection/per-direction limit (not an aggregate port rate).
+Independent packet-loss rules compound: effective loss is
+`1 - (1 - port_loss) * (1 - connection_loss)`.
+Clearing one scope preserves the other. The table displays both scopes. Clearing
+or changing a queued delay/rate limit immediately re-evaluates waiting chunks.
+A conditions dialog retains its original target even when the table updates.
+
+Each monitor still selects one destination port. Select a connection to use the keyboard:
 
 - F2: delay, bandwidth and packet loss for the selected connection.
 - F4: block/unblock the selected connection's client packets (100% loss).
@@ -87,12 +102,15 @@ retroactively discovered or controlled. This is not a complete pod packet invent
 
 ## API
 
-- GET `/v1/hello`: `traffic: true`, `interactiveTraffic: true`, `networkScope: "pod"`.
+- GET `/v1/hello`: `traffic: true`, `interactiveTraffic: true`, `portTraffic: true`, `networkScope: "pod"`.
 - POST `/v1/traffic/start`: validated TrafficConfig; returns TrafficStatus.
 - GET `/v1/traffic`: bounded statistics and current lifecycle state.
 - POST `/v1/traffic/renew`: extend an interactive lease and return current status.
 - POST `/v1/traffic/action`: `{ "id": 1, "action": "faults", "faults": { "delayMS": 100, "rateKiB": 512, "lossPercent": 2 } }`.
   Actions `clear` and `reset` also require an active connection ID.
+  Port actions use `{ "scope": "port", "port": 8080, "action": "faults", "faults": { "lossPercent": 10 } }`;
+  the port must match the session and ID must be zero/omitted. Empty scope retains
+  connection-level compatibility. Status includes `portFaults`.
 - POST `/v1/traffic/stop`: remove rules, stop proxy connections and return status.
 
 ## Tests
