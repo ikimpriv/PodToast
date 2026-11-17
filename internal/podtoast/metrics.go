@@ -15,7 +15,7 @@ const metricsTimeout = 5 * time.Second
 // MetricsHandler exposes only read-only metrics, never file or probe endpoints.
 func (s *Server) MetricsHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/metrics" {
+		if r.URL.Path != "/metrics" && r.URL.Path != "/metrics/history" {
 			http.NotFound(w, r)
 			return
 		}
@@ -29,6 +29,19 @@ func (s *Server) MetricsHandler() http.Handler {
 				http.Error(w, err.Error(), 410)
 				return
 			}
+		}
+		if r.URL.Path == "/metrics/history" {
+			h := MetricsHistory{}
+			if s.History != nil {
+				var err error
+				h, err = s.History()
+				if err != nil {
+					http.Error(w, err.Error(), 503)
+					return
+				}
+			}
+			reply(w, h)
+			return
 		}
 		// Do not queue expensive snapshots behind concurrent scrapers.
 		if !s.metricsMu.TryLock() {

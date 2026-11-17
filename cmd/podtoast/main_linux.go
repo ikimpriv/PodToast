@@ -55,6 +55,7 @@ func run() error {
 	if os.Args[1] == "idle" {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
+		go podtoast.CollectMetricsHistory(ctx)
 		select {
 		case <-ctx.Done():
 		case <-time.After(24 * time.Hour):
@@ -90,6 +91,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	history, closeHistory := podtoast.OpenMetricsHistory(pid)
+	defer closeHistory()
 	root := fmt.Sprintf("/proc/%d/root", pid)
 	fd, err := os.Open(root)
 	if err != nil {
@@ -135,7 +138,7 @@ func run() error {
 			}
 		}
 	}()
-	server := &podtoast.Server{Root: "/", TargetPID: pid, CheckTarget: check, DefaultOwner: owner}
+	server := &podtoast.Server{Root: "/", TargetPID: pid, CheckTarget: check, DefaultOwner: owner, History: history}
 	if *metricsListen != "" {
 		listener, err := net.Listen("tcp", *metricsListen)
 		if err != nil {

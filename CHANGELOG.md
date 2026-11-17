@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- Stream recursive directory summaries from inside the target container, including file/folder/link counts, logical and allocated sizes, unreadable entries, intermediate updates and request cancellation. Advertise the optional capability for older-client compatibility.
+- Collect bounded target metrics history while idle and expose it through `/metrics/history`; preserve timestamps across client reconnections without writing into target filesystems.
+
 ## 0.7.1
 
 - Include the target mount path, filesystem type and mount-point flag in streamed directory entries. Read the mount table once per listing, with bounded memory and no per-entry remote requests.

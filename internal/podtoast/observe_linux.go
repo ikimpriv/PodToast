@@ -60,41 +60,43 @@ func parseProcess(pid int, line string) (Process, error) {
 func (s *Server) snapshot(ctx context.Context) Snapshot {
 	out := Snapshot{At: time.Now(), TargetPID: s.TargetPID}
 	proc := s.path("/proc")
-	dir, err := os.Open(proc)
-	if err != nil {
-		out.Processes = section(nil, err)
-	} else {
-		defer dir.Close()
-		processes := []Process{}
-		truncated := false
-		for {
-			names, e := dir.Readdirnames(256)
-			for _, name := range names {
-				if ctx.Err() != nil {
-					return out
+	if !s.LightMetrics {
+		dir, err := os.Open(proc)
+		if err != nil {
+			out.Processes = section(nil, err)
+		} else {
+			defer dir.Close()
+			processes := []Process{}
+			truncated := false
+			for {
+				names, e := dir.Readdirnames(256)
+				for _, name := range names {
+					if ctx.Err() != nil {
+						return out
+					}
+					pid, e := strconv.Atoi(name)
+					if e != nil {
+						continue
+					}
+					text, e := smallFile(filepath.Join(proc, name, "stat"))
+					if e != nil {
+						continue
+					}
+					p, e := parseProcess(pid, text)
+					if e == nil {
+						processes = append(processes, p)
+					}
+					if len(processes) >= 16384 {
+						truncated = true
+						break
+					}
 				}
-				pid, e := strconv.Atoi(name)
-				if e != nil {
-					continue
-				}
-				text, e := smallFile(filepath.Join(proc, name, "stat"))
-				if e != nil {
-					continue
-				}
-				p, e := parseProcess(pid, text)
-				if e == nil {
-					processes = append(processes, p)
-				}
-				if len(processes) >= 16384 {
-					truncated = true
+				if e != nil || truncated {
 					break
 				}
 			}
-			if e != nil || truncated {
-				break
-			}
+			out.Processes = section(map[string]any{"scope": "visible PID namespace (may include other containers)", "items": processes, "truncated": truncated}, nil)
 		}
-		out.Processes = section(map[string]any{"scope": "visible PID namespace (may include other containers)", "items": processes, "truncated": truncated}, nil)
 	}
 	// Never report the agent's cgroup as the application's. A cgroup mount
 	// obtained through the target root is accepted only with verified membership.
@@ -141,19 +143,27 @@ func (s *Server) snapshot(ctx context.Context) Snapshot {
 	var st syscall.Statfs_t
 	e = syscall.Statfs(s.path("/"), &st)
 	storage := map[string]any{"scope": "filesystem containing /; capacity may be shared with other containers", "capacityBytes": st.Blocks * uint64(st.Bsize), "freeBytes": st.Bavail * uint64(st.Bsize), "usedBytes": (st.Blocks - st.Bfree) * uint64(st.Bsize), "inodes": st.Files, "freeInodes": st.Ffree}
-	storage["mounts"] = s.mounts(ctx, proc)
+	if !s.LightMetrics {
+		storage["mounts"] = s.mounts(ctx, proc)
+	}
 	out.Storage = section(storage, e)
 	network := map[string]any{"scope": "pod network namespace"}
-	for _, name := range []string{"dev", "route", "ipv6_route", "snmp", "netstat", "unix"} {
+	names := []string{"dev", "route", "ipv6_route", "snmp", "netstat", "unix"}
+	if s.LightMetrics {
+		names = []string{"dev"}
+	}
+	for _, name := range names {
 		text, e := smallFile(filepath.Join(proc, "net", name))
 		network[name] = section(strings.TrimSpace(text), e)
 	}
-	for _, name := range []string{"tcp", "tcp6", "udp", "udp6"} {
-		items, e := socketTable(filepath.Join(proc, "net", name))
-		network[name] = section(items, e)
+	if !s.LightMetrics {
+		for _, name := range []string{"tcp", "tcp6", "udp", "udp6"} {
+			items, e := socketTable(filepath.Join(proc, "net", name))
+			network[name] = section(items, e)
+		}
+		text, e := smallFile(s.path("/etc/resolv.conf"))
+		network["resolver"] = section(text, e)
 	}
-	text, e := smallFile(s.path("/etc/resolv.conf"))
-	network["resolver"] = section(text, e)
 	out.Network = section(network, nil)
 	return out
 }

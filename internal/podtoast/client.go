@@ -17,8 +17,9 @@ import (
 )
 
 type Client struct {
-	cc   *http2.ClientConn
-	conn net.Conn
+	directorySummary bool
+	cc               *http2.ClientConn
+	conn             net.Conn
 }
 
 func Connect(ctx context.Context, conn net.Conn) (*Client, error) {
@@ -39,6 +40,7 @@ func Connect(ctx context.Context, conn net.Conn) (*Client, error) {
 		c.Close()
 		return nil, fmt.Errorf("unsupported PodToast protocol %q", cap.Version)
 	}
+	c.directorySummary = cap.DirectorySummary
 	return c, nil
 }
 func (c *Client) Close() error  { _ = c.cc.Close(); return c.conn.Close() }

@@ -24,6 +24,8 @@ type Owner struct{ UID, GID int }
 
 type Server struct {
 	metricsMu    sync.Mutex
+	LightMetrics bool
+	History      func() (MetricsHistory, error)
 	DefaultOwner *Owner
 	Root         string
 	TargetPID    int
@@ -66,7 +68,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if r.URL.Path == "/metrics" {
+	if r.URL.Path == "/metrics" || r.URL.Path == "/metrics/history" {
 		s.MetricsHandler().ServeHTTP(w, r)
 		return
 	}
@@ -74,7 +76,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := s.path(r.URL.Query().Get("path"))
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/v1/hello":
-		reply(w, Capability{Version: Version, TargetPID: s.TargetPID, Files: true, NetworkScope: "pod"})
+		reply(w, Capability{Version: Version, TargetPID: s.TargetPID, Files: true, DirectorySummary: true, NetworkScope: "pod"})
+	case r.Method == "GET" && r.URL.Path == "/v1/directory-summary":
+		s.directorySummary(w, r)
 	case r.Method == "GET" && r.URL.Path == "/v1/list":
 		f, err := os.Open(p)
 		if err != nil {

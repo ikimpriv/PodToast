@@ -10,13 +10,13 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.7.1`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.8.0`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.7.1`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.8.0`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, image pull policy and timeout. Select targets with checkboxes;
@@ -223,3 +223,31 @@ Version 0.7.0 adds passive TCP/UDP connection observation and port-group traffic
 Directory entries expose the target mount path and filesystem type (0.7.1+). FarshMac combines these with the pod specification: mount points are highlighted and selected entries identify PVCs, disk/RAM emptyDir and other volumes. The agent reads mountinfo once per listing; it does not scan directory trees to guess storage usage.
 
 CPU and memory come directly from verified target cgroups, without metrics-server. Exact Kubernetes ephemeral storage accounting (writable layer, runtime logs and shared disk emptyDir) requires kubelet statistics; a chrooted agent cannot reliably separate image layers or read node-managed logs. statfs capacity is shared filesystem capacity, not container consumption. FarshMac reads kubelet stats via the API server when nodes/proxy access is available. No host mounts or additional privileges are attached automatically.
+
+## Background metrics history
+
+New builds collect basic target cgroup, filesystem-capacity and network-interface
+metrics during `idle`, even with no connected client. The collector samples every
+five seconds and retains up to ten minutes (120 frames), bounded to 1 MiB of metric
+text per target and at most 16 distinct target roots. Under high cardinality, the
+byte limit may shorten retention. It avoids process enumeration, mount inventory
+and socket-table scans for each sample. Filesystem capacity is not writable-layer
+or ephemeral-storage usage.
+
+History lives in the toolbox's private `/tmp/podtoast-metrics-history` directory;
+it does not write into target containers or expose a new network listener. The
+`/metrics/history` endpoint is available over the existing target-bound exec stream
+(and the optional read-only metrics listener). PID start time prevents history from
+being reused after a target restart. Clients replay original timestamps before
+live observations. Existing deployed images must be replaced to gain this feature;
+older agents still provide live metrics without history.
+
+Directory summaries are computed inside the target root by
+`GET /v1/directory-summary?path=...&ignoreDSStore=1`. The optional
+`directorySummary` capability advertises support. NDJSON frames contain
+cumulative file, subdirectory and symlink counts, logical and allocated bytes,
+and unreadable-entry counts. A final `done` frame distinguishes completion from
+transport failure. Closing/cancelling the request stops traversal. Symlinks are
+not followed; hard links are counted per entry, not as unique physical storage.
+Traversal uses bounded batches and a depth limit; inaccessible or excessively
+deep branches are reported as unreadable.
