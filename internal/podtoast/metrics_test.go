@@ -59,3 +59,32 @@ func TestMetricsOverExec(t *testing.T) {
 		t.Fatal(string(b), err)
 	}
 }
+
+func TestMemoryBreakdown(t *testing.T) {
+	for _, tc := range []struct{ stat, want string }{
+		{"anon 200\nfile 900\ninactive_file 800", "podtoast_memory_working_set_bytes 434\n"},
+		{"inactive_file 9000", "podtoast_memory_working_set_bytes 0\n"},
+		{"anon 200", ""},
+	} {
+		var out bytes.Buffer
+		writeMetrics(&out, Snapshot{Resources: Section{Value: map[string]any{
+			"memory.current": Section{Value: "1234"}, "memory.stat": Section{Value: tc.stat},
+		}}})
+		got := out.String()
+		if tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Fatal(got)
+		}
+		if tc.want == "" && strings.Contains(got, "podtoast_memory_working_set_bytes") {
+			t.Fatal("invented working set", got)
+		}
+		if strings.Contains(tc.stat, "anon 200") && !strings.Contains(got, "podtoast_memory_anonymous_bytes 200\n") {
+			t.Fatal(got)
+		}
+		if strings.Contains(tc.stat, "file 900\n") && !strings.Contains(got, "podtoast_memory_file_cache_bytes 900\n") {
+			t.Fatal(got)
+		}
+		if !strings.Contains(got, "podtoast_memory_usage_bytes 1234\n") {
+			t.Fatal(got)
+		}
+	}
+}

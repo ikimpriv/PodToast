@@ -101,6 +101,26 @@ func writeMetrics(w io.Writer, s Snapshot) {
 				emit(item.name, "gauge", "Verified target cgroup value; unlimited or unavailable limits are omitted.", v)
 			}
 		}
+		// Keep total usage separate from working set: file cache is charged to
+		// the cgroup, but inactive file pages are excluded from working set.
+		memory := map[string]float64{}
+		fields := strings.Fields(sectionText("memory.stat"))
+		for i := 0; i+1 < len(fields); i += 2 {
+			if v, err := strconv.ParseUint(fields[i+1], 10, 64); err == nil {
+				memory[fields[i]] = float64(v)
+			}
+		}
+		if v, ok := memory["anon"]; ok {
+			emit("memory_anonymous_bytes", "gauge", "Anonymous application memory in the target cgroup; excludes file cache.", v)
+		}
+		if v, ok := memory["file"]; ok {
+			emit("memory_file_cache_bytes", "gauge", "Target cgroup file cache, including tmpfs and shared memory.", v)
+		}
+		if inactive, ok := memory["inactive_file"]; ok {
+			if total, err := strconv.ParseUint(sectionText("memory.current"), 10, 64); err == nil {
+				emit("memory_working_set_bytes", "gauge", "Target cgroup total minus inactive file cache; includes active cache and kernel memory.", max(0, float64(total)-inactive))
+			}
+		}
 		quota := strings.Fields(sectionText("cpu.max"))
 		if len(quota) == 2 {
 			q, e := strconv.ParseFloat(quota[0], 64)

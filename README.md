@@ -10,13 +10,13 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.8.1`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.8.2`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.8.1`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.8.2`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, image pull policy and timeout. Select targets with checkboxes;
@@ -260,3 +260,7 @@ finish. Busy or unverifiable agents stay running; the application is never sent
 a signal. Legacy toolbox images with a writable /tmp and /bin/sh can use a
 temporary helper streamed from the replacement. Terminated ephemeral-container
 records remain in the Pod.
+
+### Container memory breakdown
+
+Version 0.8.2 exports `podtoast_memory_working_set_bytes` (total minus inactive file cache, clamped at zero), `podtoast_memory_anonymous_bytes` (application anonymous memory), and `podtoast_memory_file_cache_bytes` (file cache, including tmpfs/shared memory). `podtoast_memory_usage_bytes` remains total cgroup usage for compatibility. Working set includes active cache and kernel memory; these series are not additive. Missing `memory.stat` fields are omitted rather than treated as zero. The autonomous history collector retains all four series.

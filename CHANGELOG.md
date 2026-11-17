@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2
+
+- Export working set, anonymous application memory, and file cache separately from total cgroup memory.
+- Include the memory breakdown in autonomous retained metrics history.
+- Omit unavailable components and clamp working set at zero when snapshots race with reclaim.
+
 ## 0.8.1
 
 - Add verified, pidfd-based retirement of superseded toolbox processes. Wait for active file sessions, shells and diagnostic processes; leave busy agents running after a bounded wait.
