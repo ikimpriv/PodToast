@@ -41,6 +41,8 @@ jobs:
           test "$(docker inspect -f '{{.State.Running}}' "$id")" = true
           docker stop --time 5 "$id"
           test "$(docker inspect -f '{{.State.ExitCode}}' "$id")" = 0
+      - name: Graceful legacy agent retirement
+        run: sh tests/retire.sh
       - name: Isolated traffic control and crash recovery
         run: |
           CGO_ENABLED=0 go test -c -o /tmp/podtoast-traffic-tests ./internal/podtoast

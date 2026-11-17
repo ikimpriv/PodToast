@@ -90,3 +90,22 @@ func TestOldAgentDirectoryFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDrainKeepsBorrowedFilesystemAlive(t *testing.T) {
+	c := testClient(t, &Server{Root: t.TempDir()})
+	f := c.FS(context.Background())
+	c.Drain()
+	if c.Healthy() {
+		t.Fatal("draining agent advertised for new operations")
+	}
+	if _, err := f.Lstat("/"); err != nil {
+		t.Fatal("borrowed filesystem aborted", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var cap Capability
+	if err := c.JSON(context.Background(), "GET", "/v1/hello", nil, &cap); err == nil {
+		t.Fatal("idle drained connection remained open")
+	}
+}

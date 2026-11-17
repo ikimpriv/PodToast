@@ -11,15 +11,21 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
 )
 
 type Client struct {
-	directorySummary bool
-	cc               *http2.ClientConn
-	conn             net.Conn
+	lifetime         sync.Mutex
+	draining         bool
+	leases, requests int
+	// Set by the transport owner before sharing the connection.
+	AgentName, ImageRef string
+	directorySummary    bool
+	cc                  *http2.ClientConn
+	conn                net.Conn
 }
 
 func Connect(ctx context.Context, conn net.Conn) (*Client, error) {
@@ -43,17 +49,71 @@ func Connect(ctx context.Context, conn net.Conn) (*Client, error) {
 	c.directorySummary = cap.DirectorySummary
 	return c, nil
 }
-func (c *Client) Close() error  { _ = c.cc.Close(); return c.conn.Close() }
-func (c *Client) Healthy() bool { return c.cc.CanTakeNewRequest() }
+func (c *Client) Close() error { _ = c.cc.Close(); return c.conn.Close() }
+func (c *Client) Healthy() bool {
+	c.lifetime.Lock()
+	defer c.lifetime.Unlock()
+	return !c.draining && c.cc.CanTakeNewRequest()
+}
+
+// Drain prevents new adoption, but retains existing filesystem borrowers and
+// HTTP streams until they finish. It never aborts an in-flight copy.
+func (c *Client) Drain() {
+	c.lifetime.Lock()
+	c.draining = true
+	closeNow := c.leases == 0 && c.requests == 0
+	c.lifetime.Unlock()
+	if closeNow {
+		c.Close()
+	}
+}
+func (c *Client) release(request bool) {
+	c.lifetime.Lock()
+	if request {
+		c.requests--
+	} else {
+		c.leases--
+	}
+	closeNow := c.draining && c.leases == 0 && c.requests == 0
+	c.lifetime.Unlock()
+	if closeNow {
+		c.Close()
+	}
+}
+
+type trackedBody struct {
+	io.ReadCloser
+	once sync.Once
+	c    *Client
+}
+
+func (b *trackedBody) Read(p []byte) (int, error) {
+	n, e := b.ReadCloser.Read(p)
+	if e != nil {
+		b.once.Do(func() { b.c.release(true) })
+	}
+	return n, e
+}
+func (b *trackedBody) Close() error {
+	e := b.ReadCloser.Close()
+	b.once.Do(func() { b.c.release(true) })
+	return e
+}
+
 func (c *Client) request(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, "http://podtoast"+path, body)
 	if err != nil {
 		return nil, err
 	}
+	c.lifetime.Lock()
+	c.requests++
+	c.lifetime.Unlock()
 	resp, err := c.cc.RoundTrip(req)
 	if err != nil {
+		c.release(true)
 		return nil, err
 	}
+	resp.Body = &trackedBody{ReadCloser: resp.Body, c: c}
 	if resp.StatusCode != 200 {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
@@ -109,14 +169,20 @@ func (c *Client) Monitor(ctx context.Context, fn func(Snapshot) error) error {
 		}
 	}
 }
-func (c *Client) FS(ctx context.Context) *FS { return &FS{c: c, ctx: ctx} }
-
-type FS struct {
-	c   *Client
-	ctx context.Context
+func (c *Client) FS(ctx context.Context) *FS {
+	c.lifetime.Lock()
+	c.leases++
+	c.lifetime.Unlock()
+	return &FS{c: c, ctx: ctx}
 }
 
-func (f *FS) Close() error { return nil } // A borrowed operation context; session is shared by panels.
+type FS struct {
+	closeOnce sync.Once
+	c         *Client
+	ctx       context.Context
+}
+
+func (f *FS) Close() error { f.closeOnce.Do(func() { f.c.release(false) }); return nil }
 func (f *FS) op(o Operation) (Result, error) {
 	o.RawPath, o.RawTo, o.RawPrevious = []byte(o.Path), []byte(o.To), []byte(o.Previous)
 	var r Result

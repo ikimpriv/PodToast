@@ -10,13 +10,13 @@ PodToast is an independent MIT-licensed project, originally developed for
 [FarshMac](https://github.com/ikimpriv/FarshMac). The agent is in `cmd/podtoast`;
 the protocol and client are in `internal/podtoast`.
 
-Container image: **`ghcr.io/ikimpriv/podtoast:0.8.0`**, for Linux amd64 and arm64.
+Container image: **`ghcr.io/ikimpriv/podtoast:0.8.1`**, for Linux amd64 and arm64.
 Release tags also update `latest`; main-branch builds use `edge`.
 See [architecture and protocol](docs/ARCHITECTURE.md) and [security](SECURITY.md).
 
 ## Use from FarshMac
 
-1. Use `ghcr.io/ikimpriv/podtoast:0.8.0`, or a digest-pinned copy in your own registry.
+1. Use `ghcr.io/ikimpriv/podtoast:0.8.1`, or a digest-pinned copy in your own registry.
    The cluster must allow GHCR pulls and the required debug-container permissions.
 2. Select a pod, or enter/select its container, then press **Alt+Enter / F11 → Attach ephemeral container… → PodToast**.
    Enter the image, image pull policy and timeout. Select targets with checkboxes;
@@ -251,3 +251,12 @@ transport failure. Closing/cancelling the request stops traversal. Symlinks are
 not followed; hard links are counted per entry, not as unique physical storage.
 Traversal uses bounded batches and a depth limit; inaccessible or excessively
 deep branches are reported as unreadable.
+
+
+Version 0.8.1 supports retiring superseded agents after replacement. The retirement
+helper runs in the old toolbox, verifies the idle process's root and executable,
+and uses a Linux pidfd. It waits up to two minutes for other toolbox processes to
+finish. Busy or unverifiable agents stay running; the application is never sent
+a signal. Legacy toolbox images with a writable /tmp and /bin/sh can use a
+temporary helper streamed from the replacement. Terminated ephemeral-container
+records remain in the Pod.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -29,6 +30,38 @@ func main() {
 func run() error {
 	if len(os.Args) < 2 {
 		return fmt.Errorf("usage: podtoast idle | serve --target-id ID [--shared-processes] | traffic")
+	}
+	if os.Args[1] == "export-self" {
+		f, err := os.Open("/proc/self/exe")
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(os.Stdout, f)
+		return err
+	}
+	if os.Args[1] == "retire" {
+		// A streamed helper unlinks its own temporary image before waiting.
+		if len(os.Args) == 3 && os.Args[2] == "--temporary" {
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			if !strings.HasPrefix(exe, "/tmp/podtoast-retire.") || filepath.Base(exe) != "helper" {
+				return fmt.Errorf("invalid temporary helper path")
+			}
+			if err = os.Remove(exe); err != nil {
+				return err
+			}
+			if err = os.Remove(filepath.Dir(exe)); err != nil {
+				return err
+			}
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		return podtoast.RetireIdle(ctx)
 	}
 	if os.Args[1] == "traffic-watchdog" {
 		if len(os.Args) != 4 {

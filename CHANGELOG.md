@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1
+
+- Add verified, pidfd-based retirement of superseded toolbox processes. Wait for active file sessions, shells and diagnostic processes; leave busy agents running after a bounded wait.
+- Support legacy toolbox retirement with a temporary helper supplied by the replacement image, without changing the application filesystem.
+- Drain shared client connections only after borrowed filesystems and HTTP requests finish.
+- Test legacy-agent shutdown with an active shell in a shared PID namespace on amd64 and arm64.
+
 ## 0.8.0
 
 - Stream recursive directory summaries from inside the target container, including file/folder/link counts, logical and allocated sizes, unreadable entries, intermediate updates and request cancellation. Advertise the optional capability for older-client compatibility.
